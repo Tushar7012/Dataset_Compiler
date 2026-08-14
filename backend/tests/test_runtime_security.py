@@ -1,0 +1,81 @@
+import logging
+
+import pytest
+from fastapi.testclient import TestClient
+
+from tuneforge.main import create_app
+from tuneforge.settings import Settings
+
+
+def make_client():
+    app = create_app(Settings())
+    return app, TestClient(app)
+
+
+def test_host_cannot_be_overridden_from_env(monkeypatch):
+    monkeypatch.setenv("TUNEFORGE_HOST", "0.0.0.0")
+    with pytest.raises(Exception):
+        Settings()
+
+
+def test_health_is_public():
+    _, client = make_client()
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+def test_version_reports_configured_version():
+    app, client = make_client()
+    resp = client.get("/api/version")
+    assert resp.status_code == 200
+    assert resp.json() == {"version": app.state.settings.app_version}
+
+
+def test_protected_endpoint_requires_bearer_token():
+    _, client = make_client()
+    resp = client.get("/api/echo-session")
+    assert resp.status_code == 401
+
+
+def test_protected_endpoint_accepts_correct_token():
+    app, client = make_client()
+    token = app.state.session_token
+    resp = client.get("/api/echo-session", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+
+
+def test_protected_endpoint_rejects_wrong_token():
+    _, client = make_client()
+    resp = client.get("/api/echo-session", headers={"Authorization": "Bearer wrong-token"})
+    assert resp.status_code == 401
+
+
+def test_mismatched_origin_is_rejected():
+    app, client = make_client()
+    token = app.state.session_token
+    resp = client.get(
+        "/api/echo-session",
+        headers={"Authorization": f"Bearer {token}", "Origin": "http://evil.example.com"},
+    )
+    assert resp.status_code == 403
+
+
+def test_matching_origin_is_allowed():
+    app, client = make_client()
+    token = app.state.session_token
+    origin = f"http://127.0.0.1:{app.state.settings.port}"
+    resp = client.get(
+        "/api/echo-session",
+        headers={"Authorization": f"Bearer {token}", "Origin": origin},
+    )
+    assert resp.status_code == 200
+
+
+def test_session_token_never_appears_in_logs(caplog):
+    app, _ = make_client()
+    token = app.state.session_token
+    with caplog.at_level(logging.INFO, logger="tuneforge"):
+        logging.getLogger("tuneforge").info("session token is %s", token)
+    for record in caplog.records:
+        assert token not in record.getMessage()
