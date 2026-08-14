@@ -21,6 +21,15 @@ LLAMA_BASE_CONFIG = {
     "max_position_embeddings": 4096,
 }
 
+GPT2_BASE_CONFIG = {
+    # Real shape from sshleifer/tiny-gpt2 — GPT-2's architecture class name
+    # ends in "LMHeadModel", not "ForCausalLM". Caught a real bug: the
+    # analyzer originally rejected actual GPT-2 as "not a causal LM".
+    "architectures": ["GPT2LMHeadModel"],
+    "model_type": "gpt2",
+    "n_positions": 1024,
+}
+
 CLASSIFIER_CONFIG = {
     "architectures": ["BertForSequenceClassification"],
     "model_type": "bert",
@@ -67,6 +76,23 @@ def test_llama_base_is_detected_as_non_chat_model(monkeypatch, tmp_path):
     assert profile.is_causal_lm is True
     assert profile.is_chat_model is False
     assert profile.chat_template_found is False
+
+
+def test_gpt2_style_architecture_naming_is_recognized_as_causal_lm(monkeypatch, tmp_path):
+    # Regression test: GPT-2's real architecture name ends in "LMHeadModel",
+    # not "ForCausalLM" — this originally caused analyze_model to reject
+    # real GPT-2 as incompatible. Also verifies context_length falls back
+    # to n_positions when max_position_embeddings is absent, which is the
+    # real config.json shape for GPT-2.
+    monkeypatch.setattr(
+        "tuneforge.models.analyzer.hf_hub_download",
+        _fake_downloads({"config.json": GPT2_BASE_CONFIG}, tmp_path),
+    )
+
+    profile = analyze_model("sshleifer/tiny-gpt2", source="huggingface")
+
+    assert profile.is_causal_lm is True
+    assert profile.context_length == 1024
 
 
 def test_missing_template_on_instruct_named_model_lowers_confidence(monkeypatch, tmp_path):

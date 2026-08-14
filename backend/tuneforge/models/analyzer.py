@@ -69,6 +69,22 @@ def _load_hub_json(model_id: str, filename: str) -> dict | None:
     return json.loads(Path(cached_path).read_text())
 
 
+# Priority order matters: newer model families (Llama, Qwen, Mistral...)
+# use max_position_embeddings; GPT-2 and other older architectures have no
+# such key at all and use n_positions (aliased as n_ctx) instead — verified
+# against the real sshleifer/tiny-gpt2 config.json, which has neither
+# max_position_embeddings nor max_sequence_length.
+_CONTEXT_LENGTH_FIELDS = ("max_position_embeddings", "n_positions", "n_ctx", "max_sequence_length")
+
+
+def _extract_context_length(config: dict) -> tuple[int, str | None]:
+    for field_name in _CONTEXT_LENGTH_FIELDS:
+        value = config.get(field_name)
+        if value:
+            return int(value), field_name
+    return 0, None
+
+
 def _has_gguf_file(model_id: str) -> bool:
     try:
         files = list_repo_files(model_id, token=_hf_token())
@@ -158,13 +174,13 @@ def analyze_model(
             )
         )
 
-    context_length = int(config.get("max_position_embeddings") or config.get("max_sequence_length") or 0)
+    context_length, context_length_field = _extract_context_length(config)
     evidence.append(
         Evidence(
             field="context_length",
             value=str(context_length),
             source="config.json",
-            detail="from max_position_embeddings" if config.get("max_position_embeddings") else "unknown",
+            detail=f"from {context_length_field!r}" if context_length_field else "unknown",
         )
     )
 
