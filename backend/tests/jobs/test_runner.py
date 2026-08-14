@@ -1,0 +1,222 @@
+import json
+import uuid
+from pathlib import Path
+
+import httpx
+import pytest
+
+from tuneforge.generation.specs import GenerationSpec
+from tuneforge.jobs.checkpoints import get_latest_checkpoint
+from tuneforge.jobs.runner import MAX_ACCEPTED_ROWS, _run_generation_async, run_output_path
+from tuneforge.planning.schemas import TrainingPlan
+from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
+from tuneforge.providers.protocol import ProviderProfile
+from tuneforge.records import SourceRecord
+from tuneforge.storage.artifacts import ArtifactStore
+from tuneforge.storage.db import create_session_factory, create_sqlite_engine
+from tuneforge.storage.models import ProviderProfileRecord, RunRecord, TrainingPlanRecord
+from tuneforge.storage.repositories import ProjectRepository
+
+
+class _FakeTokenizer:
+    def encode(self, text: str) -> list[int]:
+        return text.split()
+
+
+def _provider(handler) -> OpenAICompatibleProvider:
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:9999")
+    profile = ProviderProfile(name="gen", base_url="http://127.0.0.1:9999", model="test-model", endpoint_scope="local")
+    return OpenAICompatibleProvider(profile, client)
+
+
+def _sources(document_id: uuid.UUID, count: int) -> list[SourceRecord]:
+    return [
+        SourceRecord(
+            document_id=document_id,
+            chunk_id=f"chunk-{i}",
+            text=f"Fact number {i} about the source document.",
+            source_name="doc.md",
+            source_hash="deadbeef",
+            page=None,
+            heading=None,
+        )
+        for i in range(count)
+    ]
+
+
+def _cpt_plan() -> TrainingPlan:
+    return TrainingPlan(
+        objective="cpt",
+        canonical_schema="CPTRecord",
+        target_rows=1000,
+        examples_per_chunk=1,
+        generator_profile_id=None,
+        judge_profile_id=None,
+        required_validators=["structural", "deduplication"],
+        evidence=[],
+        confidence=0.9,
+        plan_hash="hash1",
+    )
+
+
+@pytest.fixture
+def env(tmp_path: Path):
+    engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
+    factory = create_session_factory(engine)
+    session = factory()
+    artifact_store = ArtifactStore(tmp_path / "data")
+    project = ProjectRepository(session, artifact_store).create("proj")
+
+    plan_record = TrainingPlanRecord(
+        id=uuid.uuid4(), project_id=project.id, objective="cpt", plan_json={}, plan_hash="hash1"
+    )
+    provider_record = ProviderProfileRecord(
+        id=uuid.uuid4(), project_id=project.id, name="gen", base_url="http://127.0.0.1:9999",
+        model="test-model", endpoint_scope="local",
+    )
+    session.add_all([plan_record, provider_record])
+    session.commit()
+
+    run = RunRecord(
+        id=uuid.uuid4(), project_id=project.id, plan_id=plan_record.id,
+        generator_profile_id=provider_record.id, is_preview=False,
+    )
+    session.add(run)
+    session.commit()
+
+    return session, artifact_store, project, run
+
+
+async def test_cpt_run_processes_every_chunk_with_no_llm_call(env):
+    session, artifact_store, project, run = env
+
+    def handler(request):
+        raise AssertionError("CPT must not call the provider at all")
+
+    generator = _provider(handler)
+    document_id = uuid.uuid4()
+    sources = _sources(document_id, 5)
+
+    await _run_generation_async(
+        session=session,
+        run=run,
+        plan=_cpt_plan(),
+        sources=sources,
+        generator=generator,
+        judge=None,
+        spec=GenerationSpec(desired_behavior="cpt"),
+        tokenizer=_FakeTokenizer(),
+        max_tokens=512,
+        target_rows=1000,
+        resume_from_chunk=0,
+        output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
+    )
+
+    session.refresh(run)
+    assert run.status == "completed"
+    assert run.completed_rows == 5
+
+    output_lines = run_output_path(artifact_store.base_dir, project.id, run.id).read_text().strip().splitlines()
+    assert len(output_lines) == 5
+
+
+async def test_run_checkpoints_at_document_boundary_before_hitting_row_interval(env):
+    session, artifact_store, project, run = env
+    generator = _provider(lambda request: httpx.Response(500))  # never called for CPT
+    document_id = uuid.uuid4()
+    sources = _sources(document_id, 3)  # fewer than CHECKPOINT_ROW_INTERVAL (100)
+
+    await _run_generation_async(
+        session=session, run=run, plan=_cpt_plan(), sources=sources, generator=generator, judge=None,
+        spec=GenerationSpec(desired_behavior="cpt"), tokenizer=_FakeTokenizer(), max_tokens=512,
+        target_rows=1000, resume_from_chunk=0,
+        output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
+    )
+
+    checkpoint = get_latest_checkpoint(session, run.id)
+    assert checkpoint is not None
+    assert checkpoint.sequence == 3
+    assert checkpoint.completed_rows == 3
+
+
+async def test_resume_skips_already_processed_chunks(env):
+    session, artifact_store, project, run = env
+    generator = _provider(lambda request: httpx.Response(500))
+    document_id = uuid.uuid4()
+    sources = _sources(document_id, 5)
+    output_path = run_output_path(artifact_store.base_dir, project.id, run.id)
+
+    await _run_generation_async(
+        session=session, run=run, plan=_cpt_plan(), sources=sources[:2], generator=generator, judge=None,
+        spec=GenerationSpec(desired_behavior="cpt"), tokenizer=_FakeTokenizer(), max_tokens=512,
+        target_rows=1000, resume_from_chunk=0, output_path=output_path,
+    )
+    checkpoint = get_latest_checkpoint(session, run.id)
+
+    run.status = "pending"
+    session.commit()
+    await _run_generation_async(
+        session=session, run=run, plan=_cpt_plan(), sources=sources, generator=generator, judge=None,
+        spec=GenerationSpec(desired_behavior="cpt"), tokenizer=_FakeTokenizer(), max_tokens=512,
+        target_rows=1000, resume_from_chunk=checkpoint.sequence, output_path=output_path,
+    )
+
+    session.refresh(run)
+    assert run.completed_rows == 5
+    output_lines = output_path.read_text().strip().splitlines()
+    assert len(output_lines) == 5  # not 7 — resume did not redo the first 2 chunks
+
+
+async def test_run_stops_at_target_rows(env):
+    session, artifact_store, project, run = env
+    generator = _provider(lambda request: httpx.Response(500))
+    sources = _sources(uuid.uuid4(), 10)
+
+    await _run_generation_async(
+        session=session, run=run, plan=_cpt_plan(), sources=sources, generator=generator, judge=None,
+        spec=GenerationSpec(desired_behavior="cpt"), tokenizer=_FakeTokenizer(), max_tokens=512,
+        target_rows=3, resume_from_chunk=0,
+        output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
+    )
+
+    session.refresh(run)
+    assert run.completed_rows == 3
+    assert run.status == "completed"
+
+
+async def test_cancel_requested_stops_the_run_gracefully(env):
+    session, artifact_store, project, run = env
+    generator = _provider(lambda request: httpx.Response(500))
+    sources = _sources(uuid.uuid4(), 10)
+    run.status = "cancel_requested"
+    session.commit()
+
+    await _run_generation_async(
+        session=session, run=run, plan=_cpt_plan(), sources=sources, generator=generator, judge=None,
+        spec=GenerationSpec(desired_behavior="cpt"), tokenizer=_FakeTokenizer(), max_tokens=512,
+        target_rows=1000, resume_from_chunk=0,
+        output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
+    )
+
+    session.refresh(run)
+    assert run.status == "cancelled"
+    assert run.completed_rows == 0
+
+
+def test_worker_process_can_be_spawned_and_joins_cleanly(tmp_path):
+    # Proves the process-spawning plumbing (module-level target, spawn
+    # context, picklable arguments) actually works on this platform —
+    # not a full generation run, just the process boundary itself.
+    import multiprocessing
+
+    from tuneforge.jobs.runner import _spawn_probe
+
+    ctx = multiprocessing.get_context("spawn")
+    marker_path = tmp_path / "marker.txt"
+    process = ctx.Process(target=_spawn_probe, args=(str(marker_path),))
+    process.start()
+    process.join(timeout=15)
+
+    assert process.exitcode == 0
+    assert marker_path.read_text() == "ok"
