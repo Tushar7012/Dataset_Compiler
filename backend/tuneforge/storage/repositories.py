@@ -82,7 +82,7 @@ class SourceRepository:
             .one_or_none()
         )
         if existing is not None:
-            if imported.created or existing.relative_path != imported.relative_path:
+            if existing.relative_path != imported.relative_path:
                 existing.relative_path = imported.relative_path
                 existing.size_bytes = imported.size_bytes
                 try:

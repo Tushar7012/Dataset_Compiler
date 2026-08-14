@@ -172,3 +172,65 @@ The backend warning remains the existing Starlette/httpx deprecation.
 `git diff --check` passed. Independent fresh-agent review remains unavailable;
 local review covered recovered same-path and changed-extension artifacts, stale-path
 relinking, rollback cleanup, ordinary duplicate reuse, and diff scope.
+
+## Final same-path recovery commit edge case
+
+### Root cause and fix
+
+When recovery recreates an artifact at the same `relative_path` already stored on an
+existing `Source`, `ImportedFile.created` is true but no database field changes.
+`add_source()` still committed because it treated `created` as a relink condition.
+If that no-op commit failed, its compensation discarded the newly recovered artifact
+and left the existing `Source` row dangling.
+
+The duplicate branch now commits only when the existing row needs its path updated.
+Same-path recovery keeps its newly recreated artifact without a database transaction.
+
+### TDD evidence
+
+RED command from `backend/`:
+
+```text
+rtk uv run pytest tests/storage/test_persistence.py::test_recovery_keeps_artifact_when_commit_would_fail -q
+```
+
+Result before the fix: `1 failed`. The injected `session.commit()` raised
+`RuntimeError: commit failed`, proving same-path recovery attempted a no-op commit.
+
+GREEN command:
+
+```text
+rtk uv run pytest tests/storage/test_persistence.py::test_recovery_keeps_artifact_when_commit_would_fail -q
+```
+
+Result: `1 passed in 0.77s`. The recovered `Source` resolves its recreated artifact
+while `session.commit()` remains configured to fail.
+
+### Final verification
+
+```text
+rtk uv run pytest tests/storage/test_persistence.py -q
+rtk uv run pytest -q
+rtk pnpm --dir frontend test --run
+rtk pnpm --dir frontend lint
+rtk pnpm --dir frontend build
+rtk git diff --check
+```
+
+Results:
+
+- Focused storage suite: `16 passed in 2.28s`.
+- Full backend suite: `25 passed, 1 warning in 3.74s`.
+- Frontend tests: `1 test file passed, 1 test passed`.
+- Frontend lint: exit `0`.
+- Frontend production build: exit `0`.
+- Diff whitespace check: exit `0`.
+
+The backend warning remains existing Starlette/httpx deprecation output.
+
+### Review
+
+Fresh independent-review agent capability is unavailable. Scoped self-review checked
+same-path recovery skips commit, stale-path recovery still commits and compensates on
+failure, new-source failures still discard only owned artifacts, and report/test scope
+is limited to this edge case.
