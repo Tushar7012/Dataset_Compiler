@@ -118,3 +118,57 @@ Final results:
 
 - Added `ImportedFile.created` as a defaulted field. Existing constructor and method call contracts remain valid; it records whether this import owns the artifact eligible for rollback cleanup.
 - Fresh independent review-agent capability remains unavailable. Tushar explicitly approved continuation with documented local review. Local review found and removed a post-rollback database query that could mask the original commit error.
+
+## Recovered-artifact review fix
+
+### Root cause
+
+`SourceRepository.add_source()` imported a replacement artifact before checking for an
+existing `Source` row. Its duplicate branch then unconditionally called
+`discard_import()`. When a prior artifact had been deleted, that deleted the newly
+recovered artifact and left the existing row dangling.
+
+### Fix
+
+- Retain imports created during duplicate recovery.
+- Relink an existing source row when its stored path differs from the recovered
+  artifact path, with rollback and created-artifact cleanup if that commit fails.
+- Keep ordinary hash deduplication, including different source extensions, unchanged.
+
+### RED evidence
+
+Command from `backend/`:
+
+```text
+rtk uv run pytest tests/storage/test_persistence.py::test_readding_source_recovers_missing_artifact -q
+```
+
+Result before the fix: `1 failed`. `get_source_path()` raised
+`MissingArtifactError` after re-adding identical content because the duplicate path
+discarded the recovered artifact.
+
+### Final evidence
+
+```text
+rtk uv run pytest tests/storage/test_persistence.py -q
+rtk uv run pytest -q
+rtk pnpm --dir frontend test --run
+rtk pnpm --dir frontend lint
+rtk pnpm --dir frontend build
+```
+
+Results:
+
+- Focused storage suite: `15 passed in 1.38s`.
+- Full backend suite: `24 passed, 1 warning in 3.07s`.
+- Frontend tests: `1 test file passed, 1 test passed`.
+- Frontend lint: exit `0`.
+- Frontend production build: exit `0`.
+
+The backend warning remains the existing Starlette/httpx deprecation.
+
+### Review
+
+`git diff --check` passed. Independent fresh-agent review remains unavailable;
+local review covered recovered same-path and changed-extension artifacts, stale-path
+relinking, rollback cleanup, ordinary duplicate reuse, and diff scope.

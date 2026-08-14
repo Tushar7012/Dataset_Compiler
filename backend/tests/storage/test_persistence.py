@@ -64,6 +64,22 @@ def test_duplicate_import_reuses_existing_source(session, artifact_store, tmp_pa
     assert first.id == second.id
 
 
+def test_readding_source_recovers_missing_artifact(session, artifact_store, tmp_path):
+    project = ProjectRepository(session, artifact_store).create("proj")
+    src = tmp_path / "policy.txt"
+    src.write_text("same content")
+
+    source_repo = SourceRepository(session, artifact_store)
+    original = source_repo.add_source(project.id, src)
+    artifact_store.resolve(original.relative_path).unlink()
+
+    recovered = source_repo.add_source(project.id, src)
+
+    assert recovered.id == original.id
+    assert source_repo.get_source_path(recovered).read_text() == "same content"
+    assert session.query(Source).filter(Source.id == original.id).one().relative_path == recovered.relative_path
+
+
 def test_duplicate_content_with_different_extension_reuses_existing_artifact(
     session, artifact_store, tmp_path
 ):

@@ -82,7 +82,15 @@ class SourceRepository:
             .one_or_none()
         )
         if existing is not None:
-            self.artifact_store.discard_import(imported)
+            if imported.created or existing.relative_path != imported.relative_path:
+                existing.relative_path = imported.relative_path
+                existing.size_bytes = imported.size_bytes
+                try:
+                    self.session.commit()
+                except Exception:
+                    self.session.rollback()
+                    self.artifact_store.discard_import(imported)
+                    raise
             return existing
 
         source = Source(
