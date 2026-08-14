@@ -28,7 +28,7 @@ CLASSIFIER_CONFIG = {
 
 
 def _fake_downloads(files: dict[str, dict], tmp_path: Path):
-    def fake_hf_hub_download(*, repo_id: str, filename: str) -> str:
+    def fake_hf_hub_download(*, repo_id: str, filename: str, token: str | None = None) -> str:
         if filename not in files:
             raise EntryNotFoundError(f"{filename} not in {repo_id}")
         path = tmp_path / filename
@@ -85,7 +85,7 @@ def test_missing_template_on_instruct_named_model_lowers_confidence(monkeypatch,
 def test_gated_model_raises_actionable_error(monkeypatch):
     fake_response = httpx.Response(403, request=httpx.Request("GET", "https://huggingface.co"))
 
-    def fake_download(*, repo_id, filename):
+    def fake_download(*, repo_id, filename, token=None):
         raise GatedRepoError("gated", response=fake_response)
 
     monkeypatch.setattr("tuneforge.models.analyzer.hf_hub_download", fake_download)
@@ -95,7 +95,7 @@ def test_gated_model_raises_actionable_error(monkeypatch):
 
 
 def test_offline_model_raises_actionable_error(monkeypatch):
-    def fake_download(*, repo_id, filename):
+    def fake_download(*, repo_id, filename, token=None):
         raise LocalEntryNotFoundError("offline")
 
     monkeypatch.setattr("tuneforge.models.analyzer.hf_hub_download", fake_download)
@@ -105,11 +105,13 @@ def test_offline_model_raises_actionable_error(monkeypatch):
 
 
 def test_gguf_only_repo_raises_actionable_error(monkeypatch):
-    def fake_download(*, repo_id, filename):
+    def fake_download(*, repo_id, filename, token=None):
         raise EntryNotFoundError("no config.json")
 
     monkeypatch.setattr("tuneforge.models.analyzer.hf_hub_download", fake_download)
-    monkeypatch.setattr("tuneforge.models.analyzer.list_repo_files", lambda repo_id: ["model.Q4_K_M.gguf"])
+    monkeypatch.setattr(
+        "tuneforge.models.analyzer.list_repo_files", lambda repo_id, token=None: ["model.Q4_K_M.gguf"]
+    )
 
     with pytest.raises(ModelNotAccessibleError, match="GGUF"):
         analyze_model("TheBloke/Llama-3-8B-GGUF", source="huggingface")
@@ -132,3 +134,50 @@ def test_local_model_analysis_reads_from_disk(tmp_path):
 
     assert profile.source == "local"
     assert profile.is_causal_lm is True
+
+
+def test_stored_hf_token_is_passed_to_hub_calls(monkeypatch, tmp_path):
+    # Same credential store as the provider API keys (Task 3) — a token the
+    # user has saved for accessing gated repos they have access to.
+    monkeypatch.setattr("tuneforge.models.analyzer.get_api_key", lambda name: "hf_test_token")
+    seen_tokens: list[str | None] = []
+
+    def fake_hf_hub_download(*, repo_id, filename, token=None):
+        seen_tokens.append(token)
+        if filename != "config.json":
+            raise EntryNotFoundError(filename)
+        path = tmp_path / filename
+        path.write_text(json.dumps(LLAMA_BASE_CONFIG))
+        return str(path)
+
+    monkeypatch.setattr("tuneforge.models.analyzer.hf_hub_download", fake_hf_hub_download)
+
+    analyze_model("meta-llama/Llama-3-8B", source="huggingface")
+
+    assert seen_tokens
+    assert all(token == "hf_test_token" for token in seen_tokens)
+
+
+def test_missing_hf_token_defaults_to_anonymous_access(monkeypatch, tmp_path):
+    from tuneforge.security.credentials import CredentialNotFoundError
+
+    def raise_not_found(name):
+        raise CredentialNotFoundError(name)
+
+    monkeypatch.setattr("tuneforge.models.analyzer.get_api_key", raise_not_found)
+    seen_tokens: list[str | None] = []
+
+    def fake_hf_hub_download(*, repo_id, filename, token=None):
+        seen_tokens.append(token)
+        if filename != "config.json":
+            raise EntryNotFoundError(filename)
+        path = tmp_path / filename
+        path.write_text(json.dumps(LLAMA_BASE_CONFIG))
+        return str(path)
+
+    monkeypatch.setattr("tuneforge.models.analyzer.hf_hub_download", fake_hf_hub_download)
+
+    analyze_model("meta-llama/Llama-3-8B", source="huggingface")
+
+    assert seen_tokens
+    assert all(token is None for token in seen_tokens)

@@ -10,8 +10,10 @@ from pydantic import BaseModel
 
 from tuneforge.models.compatibility import IncompatibleModelError, is_causal_lm_architecture, reject_if_incompatible
 from tuneforge.models.evidence import Evidence
+from tuneforge.security.credentials import CredentialNotFoundError, get_api_key
 
 CHAT_NAME_HINTS = ("instruct", "chat", "-it")
+HF_TOKEN_CREDENTIAL_NAME = "huggingface"
 
 
 class ModelProfile(BaseModel):
@@ -41,9 +43,19 @@ def _load_local_json(local_path: Path, filename: str) -> dict | None:
     return json.loads(file_path.read_text()) if file_path.exists() else None
 
 
+def _hf_token() -> str | None:
+    # Stored the same way as provider API keys — Windows Credential Manager
+    # via tuneforge.security.credentials, never a .env file or config value.
+    # Absent is a normal state (public models need no token), not an error.
+    try:
+        return get_api_key(HF_TOKEN_CREDENTIAL_NAME)
+    except CredentialNotFoundError:
+        return None
+
+
 def _load_hub_json(model_id: str, filename: str) -> dict | None:
     try:
-        cached_path = hf_hub_download(repo_id=model_id, filename=filename)
+        cached_path = hf_hub_download(repo_id=model_id, filename=filename, token=_hf_token())
     except (GatedRepoError, LocalEntryNotFoundError):
         # LocalEntryNotFoundError is actually a subclass of EntryNotFoundError
         # in huggingface_hub — without this clause ahead of the broader catch
@@ -59,7 +71,7 @@ def _load_hub_json(model_id: str, filename: str) -> dict | None:
 
 def _has_gguf_file(model_id: str) -> bool:
     try:
-        files = list_repo_files(model_id)
+        files = list_repo_files(model_id, token=_hf_token())
     except Exception:
         return False
     return any(name.endswith(".gguf") for name in files)
