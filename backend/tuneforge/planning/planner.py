@@ -93,9 +93,11 @@ def recommend_plan(
         )
 
     if objective == "dpo":
+        if generator_profile_id is None:
+            raise DistinctJudgeRequiredError("dpo requires a generator_profile_id")
         if judge_profile_id is None:
             raise DistinctJudgeRequiredError("dpo requires a judge_profile_id")
-        if generator_profile_id is not None and judge_profile_id == generator_profile_id:
+        if judge_profile_id == generator_profile_id:
             raise DistinctJudgeRequiredError("dpo requires a judge model different from the generator model")
 
     canonical_schema = CANONICAL_SCHEMA_BY_OBJECTIVE[objective]

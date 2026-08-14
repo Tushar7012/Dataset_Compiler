@@ -96,6 +96,16 @@ def test_dpo_requires_a_judge():
         )
 
 
+def test_dpo_requires_a_generator():
+    with pytest.raises(DistinctJudgeRequiredError):
+        recommend_plan(
+            _intent("preference_alignment"),
+            _model_profile(chat_template_found=True),
+            target_rows=1000,
+            judge_profile_id=uuid.uuid4(),
+        )
+
+
 def test_dpo_rejects_same_generator_and_judge():
     shared_id = uuid.uuid4()
     with pytest.raises(DistinctJudgeRequiredError):

@@ -7,7 +7,12 @@ from tuneforge.models.analyzer import ModelProfile, analyze_model
 from tuneforge.planning.intents import TrainingIntent
 from tuneforge.planning.planner import ChatTemplateRequiredError, recommend_plan
 from tuneforge.planning.schemas import TrainingPlan
-from tuneforge.research.official_sources import FetchedSource, fetch_source, model_card_url
+from tuneforge.research.official_sources import (
+    FetchedSource,
+    fetch_model_card_readme,
+    fetch_source,
+    model_card_url,
+)
 
 
 class ResearchResult(BaseModel):
@@ -46,5 +51,7 @@ async def resolve_rejected_recommendation(
     if refreshed_profile.source != "huggingface":
         return ResearchResult(plan=None, citations=[], confidence=0.0, requires_manual_selection=True)
 
-    card = await fetch_source(model_card_url(refreshed_profile.model_id), client)
+    card = fetch_model_card_readme(refreshed_profile.model_id)
+    if card is None:
+        card = await fetch_source(model_card_url(refreshed_profile.model_id), client)
     return ResearchResult(plan=None, citations=[card], confidence=0.0, requires_manual_selection=True)

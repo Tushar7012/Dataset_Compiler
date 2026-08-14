@@ -1,4 +1,5 @@
 import httpx
+from huggingface_hub.utils import EntryNotFoundError
 
 from tuneforge.models.analyzer import ModelProfile
 from tuneforge.planning.intents import TrainingIntent
@@ -46,9 +47,37 @@ async def test_reinspection_succeeds_without_network_when_template_now_found(mon
     assert result.citations == []
 
 
-async def test_falls_back_to_manual_selection_with_citations_when_still_missing(monkeypatch):
+async def test_prefers_readme_over_webpage_when_available(monkeypatch, tmp_path):
     profile = _model_profile(chat_template_found=False)
     monkeypatch.setattr("tuneforge.research.resolver.analyze_model", lambda model_id, *, source: profile)
+
+    readme_path = tmp_path / "README.md"
+    readme_path.write_text("# org/model\nA base language model with no chat template.")
+    monkeypatch.setattr(
+        "tuneforge.research.official_sources.hf_hub_download",
+        lambda *, repo_id, filename: str(readme_path),
+    )
+
+    def handler(request):
+        raise AssertionError("should not fetch the webpage when README.md is available")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    result = await resolve_rejected_recommendation(_intent(), profile, client=client, target_rows=1000)
+
+    assert result.requires_manual_selection is True
+    assert len(result.citations) == 1
+    assert result.citations[0].url == "https://huggingface.co/org/model/blob/main/README.md"
+    assert "no chat template" in result.citations[0].excerpt
+
+
+async def test_falls_back_to_webpage_when_repo_has_no_readme(monkeypatch):
+    profile = _model_profile(chat_template_found=False)
+    monkeypatch.setattr("tuneforge.research.resolver.analyze_model", lambda model_id, *, source: profile)
+    monkeypatch.setattr(
+        "tuneforge.research.official_sources.hf_hub_download",
+        lambda *, repo_id, filename: (_ for _ in ()).throw(EntryNotFoundError("no README.md")),
+    )
 
     def handler(request):
         return httpx.Response(200, text="no chat template mentioned here")
