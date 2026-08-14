@@ -1,3 +1,6 @@
+import hashlib
+import shutil
+import uuid
 from pathlib import Path
 
 import pytest
@@ -61,6 +64,101 @@ def test_duplicate_import_reuses_existing_source(session, artifact_store, tmp_pa
     assert first.id == second.id
 
 
+def test_duplicate_content_with_different_extension_reuses_existing_artifact(
+    session, artifact_store, tmp_path
+):
+    project = ProjectRepository(session, artifact_store).create("proj")
+    text_source = tmp_path / "policy.txt"
+    csv_source = tmp_path / "policy.csv"
+    text_source.write_text("same content")
+    csv_source.write_text("same content")
+
+    source_repo = SourceRepository(session, artifact_store)
+    first = source_repo.add_source(project.id, text_source)
+    second = source_repo.add_source(project.id, csv_source)
+
+    assert second.id == first.id
+    assert list((artifact_store.project_dir(project.id) / "sources").iterdir()) == [
+        artifact_store.resolve(first.relative_path)
+    ]
+
+
+def test_add_source_rejects_inactive_project_before_creating_artifact(
+    session, artifact_store, tmp_path
+):
+    project_repo = ProjectRepository(session, artifact_store)
+    project = project_repo.create("deleted")
+    project_repo.delete(project.id)
+    src = tmp_path / "policy.txt"
+    src.write_text("data")
+
+    with pytest.raises(ValueError, match="unknown project"):
+        SourceRepository(session, artifact_store).add_source(project.id, src)
+
+    assert not artifact_store.project_dir(project.id).exists()
+    assert session.query(Source).count() == 0
+
+
+def test_add_source_rolls_back_and_removes_new_artifact_when_commit_fails(
+    session, artifact_store, tmp_path, monkeypatch
+):
+    project = ProjectRepository(session, artifact_store).create("proj")
+    src = tmp_path / "policy.txt"
+    src.write_text("data")
+
+    def fail_commit():
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(session, "commit", fail_commit)
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        SourceRepository(session, artifact_store).add_source(project.id, src)
+
+    assert list((artifact_store.project_dir(project.id) / "sources").iterdir()) == []
+    assert session.query(Source).count() == 0
+
+
+def test_add_source_commit_failure_keeps_preexisting_artifact(
+    session, artifact_store, tmp_path, monkeypatch
+):
+    project = ProjectRepository(session, artifact_store).create("proj")
+    src = tmp_path / "policy.txt"
+    src.write_text("data")
+    imported = artifact_store.import_source_file(project.id, src)
+
+    def fail_commit():
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(session, "commit", fail_commit)
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        SourceRepository(session, artifact_store).add_source(project.id, src)
+
+    assert artifact_store.resolve(imported.relative_path).read_text() == "data"
+    assert session.query(Source).count() == 0
+
+
+def test_import_hash_matches_bytes_copied_when_source_changes_during_copy(
+    session, artifact_store, tmp_path, monkeypatch
+):
+    project = ProjectRepository(session, artifact_store).create("proj")
+    src = tmp_path / "policy.txt"
+    src.write_text("before")
+
+    original_copy2 = shutil.copy2
+
+    def mutate_then_copy(source, destination, *args, **kwargs):
+        Path(source).write_text("after")
+        return original_copy2(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr("tuneforge.storage.artifacts.shutil.copy2", mutate_then_copy)
+
+    source = SourceRepository(session, artifact_store).add_source(project.id, src)
+
+    assert source.source_hash == hashlib.sha256(b"after").hexdigest()
+    assert artifact_store.resolve(source.relative_path).read_text() == "after"
+
+
 def test_interrupted_write_leaves_no_partial_source(session, artifact_store, tmp_path, monkeypatch):
     project = ProjectRepository(session, artifact_store).create("proj")
     src = tmp_path / "policy.txt"
@@ -104,3 +202,47 @@ def test_deleted_project_is_recoverable_from_trash(session, artifact_store):
     trashed = list(artifact_store.trash_dir.iterdir())
     assert len(trashed) == 1
     assert trashed[0].name.startswith(str(project_id))
+
+
+def test_create_rolls_back_and_removes_new_storage_when_commit_fails(
+    session, artifact_store, monkeypatch
+):
+    created_paths: list[Path] = []
+    original_project_dir = artifact_store.project_dir
+
+    def record_project_dir(project_id):
+        path = original_project_dir(project_id)
+        created_paths.append(path)
+        return path
+
+    def fail_commit():
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(artifact_store, "project_dir", record_project_dir)
+    monkeypatch.setattr(session, "commit", fail_commit)
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        ProjectRepository(session, artifact_store).create("proj")
+
+    assert created_paths
+    assert not created_paths[0].exists()
+    assert ProjectRepository(session, artifact_store).list_active() == []
+
+
+def test_delete_rolls_back_and_restores_storage_when_commit_fails(
+    session, artifact_store, monkeypatch
+):
+    repo = ProjectRepository(session, artifact_store)
+    project = repo.create("proj")
+    project_path = Path(project.storage_path)
+
+    def fail_commit():
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(session, "commit", fail_commit)
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        repo.delete(project.id)
+
+    assert project_path.exists()
+    assert repo.get(project.id) is not None

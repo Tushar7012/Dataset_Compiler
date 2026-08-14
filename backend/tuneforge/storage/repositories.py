@@ -17,10 +17,19 @@ class ProjectRepository:
 
     def create(self, name: str) -> Project:
         project = Project(id=uuid.uuid4(), name=name, storage_path="")
-        project.storage_path = str(self.artifact_store.project_dir(project.id))
-        self.artifact_store.project_dir(project.id).mkdir(parents=True, exist_ok=True)
-        self.session.add(project)
-        self.session.commit()
+        project_dir = self.artifact_store.project_dir(project.id)
+        project.storage_path = str(project_dir)
+        project_dir.mkdir(parents=True, exist_ok=False)
+        try:
+            self.session.add(project)
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            try:
+                project_dir.rmdir()
+            except OSError:
+                pass
+            raise
         return project
 
     def get(self, project_id: uuid.UUID) -> Project | None:
@@ -42,9 +51,14 @@ class ProjectRepository:
         project = self.get(project_id)
         if project is None:
             raise ValueError(f"unknown project: {project_id}")
-        self.artifact_store.delete_project(project_id)
+        trashed_path = self.artifact_store.delete_project(project_id)
         project.deleted_at = datetime.now(timezone.utc)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            self.artifact_store.restore_project(project_id, trashed_path)
+            raise
 
 
 class SourceRepository:
@@ -53,11 +67,23 @@ class SourceRepository:
         self.artifact_store = artifact_store
 
     def add_source(self, project_id: uuid.UUID, src_path: Path) -> Source:
-        existing = self.session.query(Source).filter(Source.project_id == project_id).all()
+        project = (
+            self.session.query(Project)
+            .filter(Project.id == project_id, Project.deleted_at.is_(None))
+            .one_or_none()
+        )
+        if project is None:
+            raise ValueError(f"unknown project: {project_id}")
+
         imported = self.artifact_store.import_source_file(project_id, src_path)
-        for source in existing:
-            if source.source_hash == imported.sha256:
-                return source
+        existing = (
+            self.session.query(Source)
+            .filter(Source.project_id == project_id, Source.source_hash == imported.sha256)
+            .one_or_none()
+        )
+        if existing is not None:
+            self.artifact_store.discard_import(imported)
+            return existing
 
         source = Source(
             id=uuid.uuid4(),
@@ -68,7 +94,12 @@ class SourceRepository:
             size_bytes=imported.size_bytes,
         )
         self.session.add(source)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            self.artifact_store.discard_import(imported)
+            raise
         return source
 
     def get_source_path(self, source: Source) -> Path:
