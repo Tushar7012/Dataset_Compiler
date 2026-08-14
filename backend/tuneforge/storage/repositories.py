@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tuneforge.storage.artifacts import ArtifactStore
@@ -48,17 +49,23 @@ class ProjectRepository:
         )
 
     def delete(self, project_id: uuid.UUID) -> None:
+        # Commit the soft-delete before touching the filesystem: if the
+        # move to trash then fails, the project is already invisible to
+        # get()/list_active() and its files simply stay where they were —
+        # inconsistent but harmless. The other order (move first, commit
+        # second) risks the DB saying "active" while the files are already
+        # gone from where an active project is expected to be, which is a
+        # worse failure to leave unresolved.
         project = self.get(project_id)
         if project is None:
             raise ValueError(f"unknown project: {project_id}")
-        trashed_path = self.artifact_store.delete_project(project_id)
         project.deleted_at = datetime.now(timezone.utc)
         try:
             self.session.commit()
         except Exception:
             self.session.rollback()
-            self.artifact_store.restore_project(project_id, trashed_path)
             raise
+        self.artifact_store.delete_project(project_id)
 
 
 class SourceRepository:
@@ -104,6 +111,17 @@ class SourceRepository:
         self.session.add(source)
         try:
             self.session.commit()
+        except IntegrityError:
+            # Another concurrent caller inserted the same (project_id,
+            # source_hash) row between our SELECT above and this INSERT.
+            # The unique constraint caught it — fetch the winner instead
+            # of failing the request.
+            self.session.rollback()
+            return (
+                self.session.query(Source)
+                .filter(Source.project_id == project_id, Source.source_hash == imported.sha256)
+                .one()
+            )
         except Exception:
             self.session.rollback()
             self.artifact_store.discard_import(imported)

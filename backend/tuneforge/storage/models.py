@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, ForeignKey, Uuid
+from sqlalchemy import JSON, ForeignKey, UniqueConstraint, Uuid
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -27,6 +27,7 @@ class Project(Base):
 
 class Source(Base):
     __tablename__ = "sources"
+    __table_args__ = (UniqueConstraint("project_id", "source_hash", name="uq_sources_project_hash"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"))

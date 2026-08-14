@@ -266,7 +266,7 @@ def test_create_rolls_back_and_removes_new_storage_when_commit_fails(
     assert ProjectRepository(session, artifact_store).list_active() == []
 
 
-def test_delete_rolls_back_and_restores_storage_when_commit_fails(
+def test_delete_does_not_move_storage_when_commit_fails(
     session, artifact_store, monkeypatch
 ):
     repo = ProjectRepository(session, artifact_store)
@@ -281,5 +281,56 @@ def test_delete_rolls_back_and_restores_storage_when_commit_fails(
     with pytest.raises(RuntimeError, match="commit failed"):
         repo.delete(project.id)
 
+    # The soft-delete commit is attempted before the filesystem move, so a
+    # failed commit means the move never happened at all — nothing to
+    # restore, and the project is still active.
     assert project_path.exists()
+    assert not artifact_store.trash_dir.exists()
     assert repo.get(project.id) is not None
+
+
+def test_add_source_recovers_from_concurrent_unique_violation(
+    session, artifact_store, tmp_path, monkeypatch
+):
+    # Real thread-timing races over SQLite are too fast and GIL-serialized
+    # to reproduce reliably in-process, so this forces the exact TOCTOU
+    # window instead: our own pre-check SELECT is made to miss a row that
+    # a "concurrent" writer already committed, so add_source is driven
+    # into the INSERT branch against an already-taken (project_id,
+    # source_hash) pair — exactly what the unique constraint exists for.
+    project = ProjectRepository(session, artifact_store).create("proj")
+    src = tmp_path / "policy.txt"
+    src.write_text("same content")
+    imported = artifact_store.import_source_file(project.id, src)
+
+    winner = Source(
+        id=uuid.uuid4(),
+        project_id=project.id,
+        filename="policy.txt",
+        source_hash=imported.sha256,
+        relative_path=imported.relative_path,
+        size_bytes=imported.size_bytes,
+    )
+    session.add(winner)
+    session.commit()
+
+    original_query = session.query
+
+    def query_that_missed_the_race(model, *args, **kwargs):
+        query = original_query(model, *args, **kwargs)
+        if model is Source:
+            monkeypatch.setattr(session, "query", original_query)
+            return query.filter(Source.id == uuid.uuid4())  # force "not found"
+        return query
+
+    monkeypatch.setattr(session, "query", query_that_missed_the_race)
+
+    result = SourceRepository(session, artifact_store).add_source(project.id, src)
+
+    assert result.id == winner.id
+    assert (
+        session.query(Source)
+        .filter_by(project_id=project.id, source_hash=imported.sha256)
+        .count()
+        == 1
+    )

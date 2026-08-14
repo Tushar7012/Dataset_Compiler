@@ -79,3 +79,16 @@ def test_session_token_never_appears_in_logs(caplog):
         logging.getLogger("tuneforge").info("session token is %s", token)
     for record in caplog.records:
         assert token not in record.getMessage()
+
+
+def test_session_token_is_redacted_from_any_logger(caplog):
+    # Redaction must not depend on which logger emits the record — uvicorn's
+    # own loggers (uvicorn.access, uvicorn.error) never propagate through
+    # "tuneforge", so this has to work at the record-factory level.
+    app, _ = make_client()
+    token = app.state.session_token
+    other_logger = logging.getLogger("uvicorn.error")
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        other_logger.info("session token is %s", token)
+    for record in caplog.records:
+        assert token not in record.getMessage()

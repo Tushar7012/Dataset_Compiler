@@ -19,21 +19,39 @@ def require_session(request: Request) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid session")
 
 
-class RedactTokenFilter(logging.Filter):
-    """Strip live session token from log records before emission."""
+_redaction_tokens: list = []
+_redaction_installed = False
 
-    def __init__(self, app: FastAPI):
-        super().__init__()
-        self._app = app
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        token = getattr(self._app.state, "session_token", None)
-        if token:
-            message = record.getMessage()
-            if token in message:
-                record.msg = message.replace(token, "***REDACTED***")
-                record.args = ()
-        return True
+def _install_global_log_redaction() -> None:
+    """Strip live session tokens from every log record, process-wide.
+
+    A logging.Filter attached to one logger (e.g. "tuneforge") only runs for
+    records created through that exact logger — it does not re-run for
+    ancestors during propagation, and uvicorn's own loggers set
+    propagate=False anyway. Wrapping the record factory instead catches
+    every record regardless of which logger emitted it.
+    """
+    global _redaction_installed
+    if _redaction_installed:
+        return
+    _redaction_installed = True
+    original_factory = logging.getLogRecordFactory()
+
+    def factory(*args, **kwargs):
+        record = original_factory(*args, **kwargs)
+        message = record.getMessage()
+        redacted = message
+        for get_token in _redaction_tokens:
+            token = get_token()
+            if token and token in redacted:
+                redacted = redacted.replace(token, "***REDACTED***")
+        if redacted != message:
+            record.msg = redacted
+            record.args = ()
+        return record
+
+    logging.setLogRecordFactory(factory)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -41,7 +59,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="TuneForge")
     app.state.settings = settings
     app.state.session_token = generate_session_token()
-    logger.addFilter(RedactTokenFilter(app))
+    _redaction_tokens.append(lambda: getattr(app.state, "session_token", None))
+    _install_global_log_redaction()
 
     @app.middleware("http")
     async def enforce_origin(request: Request, call_next):
