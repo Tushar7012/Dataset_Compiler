@@ -12,6 +12,8 @@ from tuneforge.records import (
     SFTConversationRecord,
     SFTPromptCompletionRecord,
 )
+from tuneforge.validation.structural import StructuralValidationError
+from tuneforge.validation.structural import validate_role_alternation as _shared_validate_role_alternation
 
 
 class InvalidRecordError(RuntimeError):
@@ -35,16 +37,13 @@ def _require_nonempty_str(row: StructuredRow, field: str) -> str:
 
 
 def _validate_role_alternation(messages: list[ChatMessage]) -> None:
-    if not messages:
-        raise InvalidRecordError("conversation has no messages")
-    non_system = [m for m in messages if m.role != "system"]
-    if not non_system:
-        raise InvalidRecordError("conversation has only a system message")
-    if non_system[0].role != "user":
-        raise InvalidRecordError("conversation must start with a user message (after any system message)")
-    for previous, current in zip(non_system, non_system[1:]):
-        if previous.role == current.role:
-            raise InvalidRecordError(f"consecutive {current.role!r} messages — roles must alternate")
+    # Shared with the validation pipeline (Task 10) — same algorithm, one
+    # place it lives. Translated back to this module's own exception type
+    # so callers here don't need to know about tuneforge.validation.
+    try:
+        _shared_validate_role_alternation(messages)
+    except StructuralValidationError as exc:
+        raise InvalidRecordError(str(exc)) from exc
 
 
 def normalize_text_row(row: StructuredRow, *, document_id: uuid.UUID) -> CPTRecord:
