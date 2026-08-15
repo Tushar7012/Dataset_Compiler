@@ -7,7 +7,10 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from tuneforge.api import exports, models, plans, projects, providers, runs
 from tuneforge.settings import Settings, generate_session_token
+from tuneforge.storage.artifacts import ArtifactStore
+from tuneforge.storage.db import create_session_factory, create_sqlite_engine
 
 logger = logging.getLogger("tuneforge")
 
@@ -62,6 +65,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _redaction_tokens.append(lambda: getattr(app.state, "session_token", None))
     _install_global_log_redaction()
 
+    db_path = settings.data_dir / "tuneforge.db"
+    engine = create_sqlite_engine(db_path)
+    app.state.db_path = db_path
+    app.state.session_factory = create_session_factory(engine)
+    app.state.artifact_store = ArtifactStore(settings.data_dir)
+
     @app.middleware("http")
     async def enforce_origin(request: Request, call_next):
         origin = request.headers.get("origin")
@@ -82,6 +91,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/echo-session", dependencies=[Depends(require_session)])
     async def echo_session():
         return {"status": "ok"}
+
+    protected = [Depends(require_session)]
+    app.include_router(projects.router, prefix="/api", dependencies=protected)
+    app.include_router(models.router, prefix="/api", dependencies=protected)
+    app.include_router(plans.router, prefix="/api", dependencies=protected)
+    app.include_router(providers.router, prefix="/api", dependencies=protected)
+    app.include_router(runs.router, prefix="/api", dependencies=protected)
+    app.include_router(exports.router, prefix="/api", dependencies=protected)
 
     dist_dir = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
     if dist_dir.exists():

@@ -16,6 +16,7 @@ dependencies = [
     "transformers>=5.0",
     "datasketch>=2.0.0",
     "datasets>=5.0.0",
+    "python-multipart>=0.0.20",
 ]
 
 [dependency-groups]

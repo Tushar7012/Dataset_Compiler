@@ -134,6 +134,30 @@ def _spawn_probe(marker_path: str) -> None:
     Path(marker_path).write_text("ok")
 
 
+def _load_project_sources(session, artifact_store, project_id: uuid.UUID, tokenizer) -> list[SourceRecord]:
+    from tuneforge.ingestion.chunking import chunk_into_source_records
+    from tuneforge.ingestion.documents import convert_document_cached
+    from tuneforge.storage.repositories import SourceRepository
+
+    source_repo = SourceRepository(session, artifact_store)
+    cache_dir = artifact_store.base_dir / "_docling_cache"
+
+    all_sources: list[SourceRecord] = []
+    for source_row in source_repo.list_sources(project_id):
+        file_path = source_repo.get_source_path(source_row)
+        document, source_hash = convert_document_cached(file_path, cache_dir=cache_dir)
+        document_id = uuid.uuid4()
+        chunks = chunk_into_source_records(
+            document,
+            document_id=document_id,
+            source_name=source_row.filename,
+            source_hash=source_hash,
+            tokenizer=tokenizer,
+        )
+        all_sources.extend(chunks)
+    return all_sources
+
+
 def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> None:
     """The real multiprocessing entry point. Deliberately thin: it only
     loads state from the database and delegates to _run_generation_async,
@@ -145,7 +169,6 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
     from tuneforge.models.analyzer import analyze_model
     from tuneforge.storage.artifacts import ArtifactStore
     from tuneforge.storage.models import TrainingPlanRecord
-    from tuneforge.storage.repositories import SourceRepository
 
     engine = create_sqlite_engine(Path(db_path))
     session = create_session_factory(engine)()
@@ -158,11 +181,9 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
     generator = _load_provider(session, run.generator_profile_id)
     judge = _load_provider(session, run.judge_profile_id) if run.judge_profile_id else None
 
-    source_repo = SourceRepository(session, artifact_store)
-    sources: list[SourceRecord] = []  # populated by whatever wires ingestion+chunking to a run (out of scope here)
-
     model_profile = analyze_model(plan_record.plan_json.get("model_id", ""), source="huggingface")
     tokenizer = build_tokenizer(model_profile.model_id)
+    sources = _load_project_sources(session, artifact_store, run.project_id, tokenizer)
 
     from tuneforge.storage.models import CheckpointRecord
 

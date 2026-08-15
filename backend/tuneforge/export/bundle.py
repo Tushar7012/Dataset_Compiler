@@ -9,7 +9,33 @@ from datasets import Dataset
 from tuneforge.export.splitting import split_train_eval
 from tuneforge.models.analyzer import ModelProfile
 from tuneforge.planning.schemas import TrainingPlan
+from tuneforge.records import (
+    ChatMessage,
+    CPTRecord,
+    DPORecord,
+    RecordMetadata,
+    SFTConversationRecord,
+    SFTPromptCompletionRecord,
+)
 from tuneforge.validation.pipeline import ValidationReport
+
+_RECORD_TYPES = {
+    "CPTRecord": CPTRecord,
+    "SFTPromptCompletionRecord": SFTPromptCompletionRecord,
+    "SFTConversationRecord": SFTConversationRecord,
+    "DPORecord": DPORecord,
+}
+
+
+def load_records_from_jsonl(path: Path, canonical_schema: str) -> list:
+    record_cls = _RECORD_TYPES[canonical_schema]
+    records = []
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(record_cls.model_validate_json(line))
+    return records
 
 
 def _parquet_safe_row(row: dict[str, Any]) -> dict[str, Any]:

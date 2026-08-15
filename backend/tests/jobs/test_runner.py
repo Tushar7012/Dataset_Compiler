@@ -220,3 +220,32 @@ def test_worker_process_can_be_spawned_and_joins_cleanly(tmp_path):
 
     assert process.exitcode == 0
     assert marker_path.read_text() == "ok"
+
+
+def test_load_project_sources_chunks_every_document_source_in_order(tmp_path):
+    from tuneforge.ingestion.chunking import build_tokenizer
+    from tuneforge.jobs.runner import _load_project_sources
+    from tuneforge.storage.artifacts import ArtifactStore
+    from tuneforge.storage.db import create_session_factory, create_sqlite_engine
+    from tuneforge.storage.repositories import ProjectRepository, SourceRepository
+
+    engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
+    session = create_session_factory(engine)()
+    artifact_store = ArtifactStore(tmp_path / "data")
+    project = ProjectRepository(session, artifact_store).create("proj")
+
+    doc_a = tmp_path / "a.md"
+    doc_a.write_text("# Doc A\n\nFirst document content.\n")
+    doc_b = tmp_path / "b.md"
+    doc_b.write_text("# Doc B\n\nSecond document content.\n")
+    source_repo = SourceRepository(session, artifact_store)
+    source_repo.add_source(project.id, doc_a)
+    source_repo.add_source(project.id, doc_b)
+
+    tokenizer = build_tokenizer("gpt2", max_tokens=64)
+    sources = _load_project_sources(session, artifact_store, project.id, tokenizer)
+
+    assert len(sources) == 2
+    texts = {s.text for s in sources}
+    assert any("First document content" in t for t in texts)
+    assert any("Second document content" in t for t in texts)

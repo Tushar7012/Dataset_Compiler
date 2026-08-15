@@ -334,3 +334,20 @@ def test_add_source_recovers_from_concurrent_unique_violation(
         .count()
         == 1
     )
+
+
+def test_list_sources_returns_every_source_for_a_project_in_import_order(session, artifact_store, tmp_path):
+    project = ProjectRepository(session, artifact_store).create("proj")
+    source_repo = SourceRepository(session, artifact_store)
+
+    first_path = tmp_path / "first.txt"
+    first_path.write_text("first")
+    second_path = tmp_path / "second.txt"
+    second_path.write_text("second")
+
+    first = source_repo.add_source(project.id, first_path)
+    second = source_repo.add_source(project.id, second_path)
+
+    sources = source_repo.list_sources(project.id)
+
+    assert [s.id for s in sources] == [first.id, second.id]

@@ -130,3 +130,11 @@ class SourceRepository:
 
     def get_source_path(self, source: Source) -> Path:
         return self.artifact_store.resolve(source.relative_path)
+
+    def list_sources(self, project_id: uuid.UUID) -> list[Source]:
+        return (
+            self.session.query(Source)
+            .filter(Source.project_id == project_id)
+            .order_by(Source.created_at)
+            .all()
+        )
