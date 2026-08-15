@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import uuid
 from pathlib import Path
@@ -8,7 +9,16 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from tuneforge.api.deps import get_artifact_store, get_session
+from tuneforge.ingestion.structured import (
+    EmptyStructuredFileError,
+    UnsupportedStructuredFormatError,
+    load_structured_rows,
+)
+from tuneforge.normalization.detector import detect_schema
+from tuneforge.normalization.mappers import InvalidRecordError
+from tuneforge.normalization.preview import ColumnMappingError, apply_column_mapping, preview_normalization
 from tuneforge.storage.artifacts import ArtifactStore
+from tuneforge.storage.models import Source
 from tuneforge.storage.repositories import ProjectRepository, SourceRepository
 
 router = APIRouter()
@@ -65,3 +75,77 @@ async def upload_source(
         shutil.rmtree(upload_dir, ignore_errors=True)
 
     return {"id": str(source.id), "filename": source.filename, "source_hash": source.source_hash}
+
+
+def _get_source_or_404(session: Session, project_id: uuid.UUID, source_id: uuid.UUID) -> Source:
+    source = (
+        session.query(Source).filter(Source.id == source_id, Source.project_id == project_id).one_or_none()
+    )
+    if source is None:
+        raise HTTPException(status_code=404, detail=f"source not found: {source_id}")
+    return source
+
+
+def _load_rows_or_422(artifact_store: ArtifactStore, source: Source) -> list:
+    path = artifact_store.resolve(source.relative_path)
+    try:
+        return load_structured_rows(path)
+    except (UnsupportedStructuredFormatError, EmptyStructuredFileError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/projects/{project_id}/sources/{source_id}/schema")
+async def get_source_schema(
+    project_id: uuid.UUID,
+    source_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    artifact_store: ArtifactStore = Depends(get_artifact_store),
+):
+    source = _get_source_or_404(session, project_id, source_id)
+    rows = _load_rows_or_422(artifact_store, source)
+
+    detection = detect_schema([row.data for row in rows])
+    columns = list(rows[0].data.keys()) if rows else []
+    return {
+        "schema_name": detection.schema_name,
+        "confidence": detection.confidence,
+        "matched_keys": detection.matched_keys,
+        "columns": columns,
+    }
+
+
+@router.post("/projects/{project_id}/sources/{source_id}/normalize-preview")
+async def normalize_source_preview(
+    project_id: uuid.UUID,
+    source_id: uuid.UUID,
+    payload: dict,
+    session: Session = Depends(get_session),
+    artifact_store: ArtifactStore = Depends(get_artifact_store),
+):
+    source = _get_source_or_404(session, project_id, source_id)
+    rows = _load_rows_or_422(artifact_store, source)
+
+    mapping = payload.get("mapping")
+    if mapping:
+        try:
+            rows = apply_column_mapping(rows, mapping)
+        except ColumnMappingError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    detection = detect_schema([row.data for row in rows])
+    if detection.schema_name is None:
+        raise HTTPException(
+            status_code=422,
+            detail="could not determine the training format for this file — provide a column mapping",
+        )
+
+    try:
+        preview_records = preview_normalization(rows, detection.schema_name, document_id=uuid.uuid4())
+    except InvalidRecordError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {
+        "schema_name": detection.schema_name,
+        "preview": [json.loads(record.model_dump_json()) for record in preview_records],
+        "total_rows": len(rows),
+    }

@@ -115,3 +115,16 @@ export interface RunRecordsResponse {
   records: Record<string, unknown>[]
   total_accepted: number
 }
+
+export interface SchemaDetection {
+  schema_name: string | null
+  confidence: number
+  matched_keys: string[]
+  columns: string[]
+}
+
+export interface NormalizePreviewResponse {
+  schema_name: string
+  preview: Record<string, unknown>[]
+  total_rows: number
+}
