@@ -76,3 +76,19 @@ export interface PlanApproval {
   id: string
   approved_at: string
 }
+
+export type EndpointScope = 'local' | 'remote'
+
+export interface ProviderProfileInput {
+  name: string
+  base_url: string
+  model: string
+  endpoint_scope: EndpointScope
+  api_key?: string
+}
+
+export interface ProviderProfile {
+  id: string
+  name: string
+  endpoint_scope: EndpointScope
+}

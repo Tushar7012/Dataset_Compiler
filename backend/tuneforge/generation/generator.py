@@ -6,7 +6,7 @@ import logging
 from tuneforge.generation.specs import GenerationSpec
 from tuneforge.planning.schemas import TrainingPlan
 from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
-from tuneforge.providers.protocol import GenerationRequest
+from tuneforge.providers.protocol import GenerationRequest, RunConsent
 from tuneforge.records import (
     ChatMessage,
     CPTRecord,
@@ -46,7 +46,9 @@ def build_cpt_record(source: SourceRecord) -> CPTRecord:
     return CPTRecord(text=source.text, metadata=_metadata(source))
 
 
-async def _generate_qa_candidate(provider: OpenAICompatibleProvider, source: SourceRecord) -> dict:
+async def _generate_qa_candidate(
+    provider: OpenAICompatibleProvider, source: SourceRecord, consent: RunConsent | None = None
+) -> dict:
     prompt = (
         "You are generating a training example strictly grounded in the source text "
         "below. Ask one clear question a reader could answer using only this text, "
@@ -60,7 +62,8 @@ async def _generate_qa_candidate(provider: OpenAICompatibleProvider, source: Sou
         GenerationRequest(
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-        )
+        ),
+        consent=consent,
     )
     try:
         candidate = json.loads(response.content)
@@ -75,12 +78,12 @@ async def _generate_qa_candidate(provider: OpenAICompatibleProvider, source: Sou
 
 
 async def generate_sft_prompt_completion_record(
-    provider: OpenAICompatibleProvider, source: SourceRecord, spec: GenerationSpec
+    provider: OpenAICompatibleProvider, source: SourceRecord, spec: GenerationSpec, consent: RunConsent | None = None
 ) -> SFTPromptCompletionRecord | None:
     last_error: Exception | None = None
     for _ in range(spec.max_retries + 1):
         try:
-            candidate = await _generate_qa_candidate(provider, source)
+            candidate = await _generate_qa_candidate(provider, source, consent)
         except (MalformedGenerationError, GroundingError) as exc:
             last_error = exc
             continue
@@ -94,12 +97,12 @@ async def generate_sft_prompt_completion_record(
 
 
 async def generate_sft_conversation_record(
-    provider: OpenAICompatibleProvider, source: SourceRecord, spec: GenerationSpec
+    provider: OpenAICompatibleProvider, source: SourceRecord, spec: GenerationSpec, consent: RunConsent | None = None
 ) -> SFTConversationRecord | None:
     last_error: Exception | None = None
     for _ in range(spec.max_retries + 1):
         try:
-            candidate = await _generate_qa_candidate(provider, source)
+            candidate = await _generate_qa_candidate(provider, source, consent)
         except (MalformedGenerationError, GroundingError) as exc:
             last_error = exc
             continue
@@ -114,7 +117,14 @@ async def generate_sft_conversation_record(
     return None
 
 
-async def _score_candidate(judge: OpenAICompatibleProvider, *, question: str, answer: str, source: SourceRecord) -> float:
+async def _score_candidate(
+    judge: OpenAICompatibleProvider,
+    *,
+    question: str,
+    answer: str,
+    source: SourceRecord,
+    consent: RunConsent | None = None,
+) -> float:
     prompt = (
         "Rate how well the ANSWER responds to the QUESTION using only the SOURCE "
         "text below, on a scale from 0 (useless or wrong) to 10 (excellent, fully "
@@ -123,7 +133,8 @@ async def _score_candidate(judge: OpenAICompatibleProvider, *, question: str, an
         'Respond with only a JSON object: {"score": <number 0-10>}'
     )
     response = await judge.generate(
-        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
+        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}),
+        consent=consent,
     )
     try:
         data = json.loads(response.content)
@@ -137,17 +148,20 @@ async def generate_dpo_record(
     judge: OpenAICompatibleProvider,
     source: SourceRecord,
     spec: GenerationSpec,
+    consent: RunConsent | None = None,
 ) -> DPORecord | None:
     last_error: Exception | None = None
     for _ in range(spec.max_retries + 1):
         try:
-            question_candidate = await _generate_qa_candidate(generator, source)
+            question_candidate = await _generate_qa_candidate(generator, source, consent)
             question = question_candidate["question"]
 
             scored: list[tuple[float, str]] = []
             for _candidate_index in range(spec.max_candidates):
-                candidate = await _generate_qa_candidate(generator, source)
-                score = await _score_candidate(judge, question=question, answer=candidate["answer"], source=source)
+                candidate = await _generate_qa_candidate(generator, source, consent)
+                score = await _score_candidate(
+                    judge, question=question, answer=candidate["answer"], source=source, consent=consent
+                )
                 scored.append((score, candidate["answer"]))
 
             scored.sort(key=lambda pair: pair[0])
@@ -178,15 +192,16 @@ async def generate_record(
     generator: OpenAICompatibleProvider,
     judge: OpenAICompatibleProvider | None,
     spec: GenerationSpec,
+    consent: RunConsent | None = None,
 ):
     if plan.objective == "cpt":
         return build_cpt_record(source)
     if plan.objective == "sft_prompt_completion":
-        return await generate_sft_prompt_completion_record(generator, source, spec)
+        return await generate_sft_prompt_completion_record(generator, source, spec, consent)
     if plan.objective == "sft_conversation":
-        return await generate_sft_conversation_record(generator, source, spec)
+        return await generate_sft_conversation_record(generator, source, spec, consent)
     if plan.objective == "dpo":
         if judge is None:
             raise ValueError("dpo generation requires a judge provider")
-        return await generate_dpo_record(generator, judge, source, spec)
+        return await generate_dpo_record(generator, judge, source, spec, consent)
     raise ValueError(f"unknown objective: {plan.objective}")

@@ -1,17 +1,22 @@
 import json
 import uuid
 
+from datetime import datetime, timezone
+
 import httpx
+import pytest
 
 from tuneforge.generation.generator import (
     build_cpt_record,
     generate_dpo_record,
+    generate_record,
     generate_sft_conversation_record,
     generate_sft_prompt_completion_record,
 )
 from tuneforge.generation.specs import GenerationSpec
-from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
-from tuneforge.providers.protocol import ProviderProfile
+from tuneforge.planning.schemas import TrainingPlan
+from tuneforge.providers.openai_compatible import OpenAICompatibleProvider, RemoteConsentRequiredError
+from tuneforge.providers.protocol import ProviderProfile, RunConsent
 from tuneforge.records import SourceRecord
 
 SOURCE_TEXT = "Employees get 20 days of paid vacation per year."
@@ -29,11 +34,17 @@ def _source() -> SourceRecord:
     )
 
 
-def _provider(handler) -> OpenAICompatibleProvider:
+def _provider(handler, *, endpoint_scope: str = "local") -> OpenAICompatibleProvider:
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:9999")
-    profile = ProviderProfile(name="test", base_url="http://127.0.0.1:9999", model="test-model", endpoint_scope="local")
+    profile = ProviderProfile(
+        name="test", base_url="http://127.0.0.1:9999", model="test-model", endpoint_scope=endpoint_scope
+    )
     return OpenAICompatibleProvider(profile, client)
+
+
+def _consent() -> RunConsent:
+    return RunConsent(run_id=uuid.uuid4(), granted_at=datetime.now(timezone.utc))
 
 
 def _chat_response(content: dict) -> httpx.Response:
@@ -181,3 +192,81 @@ async def test_dpo_rejects_when_candidate_scores_are_too_close():
     )
 
     assert record is None
+
+
+def _qa_response(request):
+    return _chat_response(
+        {"question": "How many vacation days?", "answer": "20 days.", "supporting_quote": "20 days of paid vacation"}
+    )
+
+
+async def test_sft_prompt_completion_forwards_consent_to_a_remote_provider():
+    provider = _provider(_qa_response, endpoint_scope="remote")
+
+    with pytest.raises(RemoteConsentRequiredError):
+        await generate_sft_prompt_completion_record(provider, _source(), GenerationSpec(desired_behavior="qa"))
+
+    record = await generate_sft_prompt_completion_record(
+        provider, _source(), GenerationSpec(desired_behavior="qa"), consent=_consent()
+    )
+    assert record is not None
+
+
+async def test_sft_conversation_forwards_consent_to_a_remote_provider():
+    provider = _provider(_qa_response, endpoint_scope="remote")
+
+    with pytest.raises(RemoteConsentRequiredError):
+        await generate_sft_conversation_record(provider, _source(), GenerationSpec(desired_behavior="chat"))
+
+    record = await generate_sft_conversation_record(
+        provider, _source(), GenerationSpec(desired_behavior="chat"), consent=_consent()
+    )
+    assert record is not None
+
+
+async def test_dpo_forwards_consent_to_both_a_remote_generator_and_a_remote_judge():
+    answer_scores = {"bad answer": 2.0, "best answer": 9.0}
+    candidate_answers_factory = lambda: iter(["throwaway", "bad answer", "best answer"])  # noqa: E731
+    candidate_answers = candidate_answers_factory()
+
+    def handler(request):
+        payload = json.loads(request.content)
+        prompt = payload["messages"][0]["content"]
+        if "QUESTION:" in prompt:
+            for answer, score in answer_scores.items():
+                if f"ANSWER: {answer}" in prompt:
+                    return _chat_response({"score": score})
+            raise AssertionError(f"unscored answer in judge prompt: {prompt}")
+        return _chat_response(
+            {"question": "How many vacation days?", "answer": next(candidate_answers), "supporting_quote": "20 days of paid vacation"}
+        )
+
+    generator = _provider(handler, endpoint_scope="remote")
+    judge = _provider(handler, endpoint_scope="remote")
+    spec = GenerationSpec(desired_behavior="dpo", max_candidates=2, score_margin=2.0)
+
+    with pytest.raises(RemoteConsentRequiredError):
+        await generate_dpo_record(generator, judge, _source(), spec)
+
+    candidate_answers = candidate_answers_factory()
+    record = await generate_dpo_record(generator, judge, _source(), spec, consent=_consent())
+    assert record is not None
+    assert record.chosen[0].content == "best answer"
+
+
+async def test_generate_record_forwards_consent_through_the_objective_dispatch():
+    provider = _provider(_qa_response, endpoint_scope="remote")
+    plan = TrainingPlan(
+        objective="sft_prompt_completion", canonical_schema="SFTPromptCompletionRecord", target_rows=1,
+        examples_per_chunk=1, generator_profile_id=None, judge_profile_id=None, required_validators=[],
+        evidence=[], confidence=0.9, plan_hash="hash1",
+    )
+    spec = GenerationSpec(desired_behavior="qa")
+
+    with pytest.raises(RemoteConsentRequiredError):
+        await generate_record(plan=plan, source=_source(), generator=provider, judge=None, spec=spec)
+
+    record = await generate_record(
+        plan=plan, source=_source(), generator=provider, judge=None, spec=spec, consent=_consent()
+    )
+    assert record is not None

@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -7,10 +8,10 @@ import pytest
 
 from tuneforge.generation.specs import GenerationSpec
 from tuneforge.jobs.checkpoints import get_latest_checkpoint
-from tuneforge.jobs.runner import MAX_ACCEPTED_ROWS, _run_generation_async, run_output_path
+from tuneforge.jobs.runner import MAX_ACCEPTED_ROWS, _run_generation_async, run_generation_worker, run_output_path
 from tuneforge.planning.schemas import TrainingPlan
 from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
-from tuneforge.providers.protocol import ProviderProfile
+from tuneforge.providers.protocol import ProviderProfile, RunConsent
 from tuneforge.records import SourceRecord
 from tuneforge.storage.artifacts import ArtifactStore
 from tuneforge.storage.db import create_session_factory, create_sqlite_engine
@@ -69,7 +70,8 @@ def env(tmp_path: Path):
     project = ProjectRepository(session, artifact_store).create("proj")
 
     plan_record = TrainingPlanRecord(
-        id=uuid.uuid4(), project_id=project.id, objective="cpt", plan_json={}, plan_hash="hash1"
+        id=uuid.uuid4(), project_id=project.id, objective="cpt",
+        plan_json=json.loads(_cpt_plan().model_dump_json()), plan_hash="hash1",
     )
     provider_record = ProviderProfileRecord(
         id=uuid.uuid4(), project_id=project.id, name="gen", base_url="http://127.0.0.1:9999",
@@ -202,6 +204,101 @@ async def test_cancel_requested_stops_the_run_gracefully(env):
     session.refresh(run)
     assert run.status == "cancelled"
     assert run.completed_rows == 0
+
+
+async def test_run_forwards_consent_to_generate_record(env, monkeypatch):
+    session, artifact_store, project, run = env
+    granted_at = datetime.now(timezone.utc)
+    run.remote_consent_granted_at = granted_at
+    session.commit()
+
+    captured = {}
+
+    async def fake_generate_record(*, plan, source, generator, judge, spec, consent=None):
+        captured["consent"] = consent
+        return None
+
+    monkeypatch.setattr("tuneforge.jobs.runner.generate_record", fake_generate_record)
+
+    await _run_generation_async(
+        session=session, run=run, plan=_cpt_plan(), sources=_sources(uuid.uuid4(), 1),
+        generator=_provider(lambda request: (_ for _ in ()).throw(AssertionError("not expected"))),
+        judge=None, spec=GenerationSpec(desired_behavior="cpt"), tokenizer=_FakeTokenizer(), max_tokens=512,
+        target_rows=1000, resume_from_chunk=0,
+        output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
+        consent=RunConsent(run_id=run.id, granted_at=granted_at),
+    )
+
+    assert captured["consent"] is not None
+    assert captured["consent"].run_id == run.id
+    assert captured["consent"].granted_at.replace(tzinfo=None) == granted_at.replace(tzinfo=None)
+
+
+def test_worker_builds_consent_from_the_runs_remote_consent_timestamp(env, monkeypatch):
+    session, artifact_store, project, run = env
+    granted_at = datetime.now(timezone.utc)
+    run.remote_consent_granted_at = granted_at
+    session.commit()
+    db_path = session.get_bind().url.database
+    session.close()
+
+    captured = {}
+
+    class _FakeProfile:
+        model_id = "gpt2"
+        context_length = 512
+
+    class _FakeTok:
+        tokenizer = object()
+
+    monkeypatch.setattr("tuneforge.models.analyzer.analyze_model", lambda model_id, *, source: _FakeProfile())
+    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
+    monkeypatch.setattr(
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+    )
+    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
+
+    async def fake_run_generation_async(**kwargs):
+        captured["consent"] = kwargs.get("consent")
+
+    monkeypatch.setattr("tuneforge.jobs.runner._run_generation_async", fake_run_generation_async)
+
+    run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
+
+    assert captured["consent"] is not None
+    assert captured["consent"].run_id == run.id
+    assert captured["consent"].granted_at.replace(tzinfo=None) == granted_at.replace(tzinfo=None)
+
+
+def test_worker_builds_no_consent_when_none_was_granted(env, monkeypatch):
+    session, artifact_store, project, run = env
+    db_path = session.get_bind().url.database
+    session.close()
+
+    captured = {}
+
+    class _FakeProfile:
+        model_id = "gpt2"
+        context_length = 512
+
+    class _FakeTok:
+        tokenizer = object()
+
+    monkeypatch.setattr("tuneforge.models.analyzer.analyze_model", lambda model_id, *, source: _FakeProfile())
+    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
+    monkeypatch.setattr(
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+    )
+    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
+
+    async def fake_run_generation_async(**kwargs):
+        captured["consent"] = kwargs.get("consent")
+
+    monkeypatch.setattr("tuneforge.jobs.runner._run_generation_async", fake_run_generation_async)
+
+    run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
+
+    assert captured["consent"] is None
 
 
 def test_worker_process_can_be_spawned_and_joins_cleanly(tmp_path):

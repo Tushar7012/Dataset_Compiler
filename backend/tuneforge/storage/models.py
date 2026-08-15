@@ -88,6 +88,7 @@ class RunRecord(Base):
     total_rows: Mapped[int] = mapped_column(default=0)
     completed_rows: Mapped[int] = mapped_column(default=0)
     assurance_level: Mapped[str | None] = mapped_column(default=None)
+    remote_consent_granted_at: Mapped[datetime | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
 

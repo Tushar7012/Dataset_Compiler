@@ -3,9 +3,10 @@ import { ProjectSetupStep } from './features/project-setup/ProjectSetupStep'
 import { ModelSelectionStep } from './features/model-selection/ModelSelectionStep'
 import { GoalWizardStep } from './features/goal-wizard/GoalWizardStep'
 import { PlanConfirmationStep } from './features/plan-confirmation/PlanConfirmationStep'
+import { ProviderConfigStep } from './features/provider-config/ProviderConfigStep'
 import type { ModelProfileResponse, Project, TrainingPlanResponse } from './api/types'
 
-type WizardStep = 'project' | 'model' | 'goal' | 'plan'
+type WizardStep = 'project' | 'model' | 'goal' | 'plan' | 'provider'
 
 function App() {
   const [step, setStep] = useState<WizardStep>('project')
@@ -52,7 +53,16 @@ function App() {
         <PlanConfirmationStep
           plan={plan}
           onApproved={() => {
-            // Provider setup, generation runs, and export are plan_9.md's scope.
+            setStep('provider')
+          }}
+        />
+      )}
+
+      {step === 'provider' && project && (
+        <ProviderConfigStep
+          projectId={project.id}
+          onProviderReady={() => {
+            // Preview, run progress, and export are plan_10.md's scope.
           }}
         />
       )}

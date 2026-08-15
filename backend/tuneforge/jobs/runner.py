@@ -14,7 +14,7 @@ from tuneforge.generation.specs import GenerationSpec
 from tuneforge.jobs.checkpoints import CHECKPOINT_ROW_INTERVAL, record_checkpoint
 from tuneforge.planning.schemas import TrainingPlan
 from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
-from tuneforge.providers.protocol import ProviderProfile
+from tuneforge.providers.protocol import ProviderProfile, RunConsent
 from tuneforge.records import SourceRecord
 from tuneforge.storage.db import create_session_factory, create_sqlite_engine
 from tuneforge.storage.models import ProviderProfileRecord, RunRecord
@@ -61,6 +61,7 @@ async def _run_generation_async(
     target_rows: int,
     resume_from_chunk: int,
     output_path: Path,
+    consent: RunConsent | None = None,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -92,7 +93,9 @@ async def _run_generation_async(
                 logger.info("run %s cancelled after %d chunks", run.id, chunks_processed)
                 return
 
-            record = await generate_record(plan=plan, source=source, generator=generator, judge=judge, spec=spec)
+            record = await generate_record(
+                plan=plan, source=source, generator=generator, judge=judge, spec=spec, consent=consent
+            )
             chunks_processed += 1
 
             if record is not None:
@@ -198,6 +201,12 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
     target_rows = 20 if run.is_preview else plan.target_rows
     output_path = run_output_path(artifact_store.base_dir, run.project_id, run.id)
 
+    consent = (
+        RunConsent(run_id=run.id, granted_at=run.remote_consent_granted_at)
+        if run.remote_consent_granted_at
+        else None
+    )
+
     asyncio.run(
         _run_generation_async(
             session=session,
@@ -212,6 +221,7 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
             target_rows=target_rows,
             resume_from_chunk=resume_from_chunk,
             output_path=output_path,
+            consent=consent,
         )
     )
 
