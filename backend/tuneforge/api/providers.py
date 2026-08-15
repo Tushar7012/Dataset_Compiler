@@ -6,13 +6,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from tuneforge.api.deps import get_session
-from tuneforge.security.credentials import store_api_key
+from tuneforge.security.credentials import CredentialNotFoundError, get_api_key, store_api_key
 from tuneforge.storage.models import ProviderProfileRecord
 
 router = APIRouter()
 
 _VALID_SCOPES = {"local", "remote"}
 _REQUIRED_FIELDS = ("project_id", "name", "base_url", "model", "endpoint_scope")
+
+# Well-known keyring entry for the pre-configured Gemini key (see backend/scripts/set_secrets.py).
+# A remote provider created without an explicit api_key falls back to this if it's been seeded,
+# so the key never has to be re-typed into the frontend per project.
+GEMINI_API_KEY_CREDENTIAL_NAME = "gemini"
 
 
 @router.post("/providers", status_code=201)
@@ -28,6 +33,12 @@ async def create_provider(payload: dict, session: Session = Depends(get_session)
     if api_key:
         credential_reference = f"provider-{uuid.uuid4().hex}"
         store_api_key(credential_reference, api_key)
+    elif payload["endpoint_scope"] == "remote":
+        try:
+            get_api_key(GEMINI_API_KEY_CREDENTIAL_NAME)
+            credential_reference = GEMINI_API_KEY_CREDENTIAL_NAME
+        except CredentialNotFoundError:
+            pass
 
     record = ProviderProfileRecord(
         id=uuid.uuid4(),
