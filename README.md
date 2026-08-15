@@ -1,6 +1,6 @@
 # TuneForge
 
-Windows-first local web app. Turn documents (PDF, DOCX, HTML, Markdown, TXT, CSV, JSON, JSONL) into validated, model-aware training datasets (CPT, SFT prompt-completion, SFT conversation, DPO) for Unsloth fine-tuning.
+Windows-first local web app. Turn documents (PDF, DOCX, HTML, Markdown, TXT, CSV, JSON, JSONL) into validated, model-aware training datasets (CPT, SFT prompt-completion, SFT conversation, DPO) for fine-tuning.
 
 Local-only. Binds to `127.0.0.1`, never `0.0.0.0`. No document text or credentials leave your machine unless you explicitly approve a remote provider call.
 
