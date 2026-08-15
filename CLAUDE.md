@@ -30,12 +30,14 @@ Commit per task, message format `feat: ...` / `fix: ...`. Push only when told to
 - **No NVIDIA NeMo Data Designer.** `PLAN.md`'s Task 9 originally specified it; decided against it after checking the real SDK — it needs a separately deployed microservice (NVIDIA-hosted or self-hosted), not something that runs locally. Generation goes straight through the OpenAI-compatible provider client (`tuneforge.providers`) instead. Do not reintroduce a NeMo dependency without re-confirming this decision with the user.
 - **OCR is disabled** in Docling (`do_ocr=False` in `tuneforge.ingestion.documents`). Scanned/image-only PDFs won't extract text. Deliberate, to avoid installing OCR models — `torch`/`torchvision` are still unavoidable pip dependencies of Docling itself, but that's a fixed cost, not a runtime one.
 - **Generation is a real OS process**, not an asyncio background task (`tuneforge.jobs.runner`). SQLite is the only channel between the API process and the worker — no queues, no shared memory. This is what makes crash isolation and resume free.
+- **Pre-configured Gemini + Hugging Face credentials.** Run `cd backend && uv run python scripts/set_secrets.py` once to store both in Windows Credential Manager (`gemini`, `huggingface` — see `tuneforge.api.providers.GEMINI_API_KEY_CREDENTIAL_NAME`, `tuneforge.models.analyzer.HF_TOKEN_CREDENTIAL_NAME`). A remote `POST /providers` call with no `api_key` automatically falls back to the pre-seeded `gemini` credential, so the frontend never needs the key typed in per project. HF token is used automatically wherever `hf_hub_download`/`list_repo_files` run.
 
 ## Known gaps — check before assuming something works end-to-end
 
-- Structured-data (CSV/JSON/JSONL) records from Task 8 are not merged into a run's generated output. A run only pulls in document-shaped sources.
+- Structured-data (CSV/JSON/JSONL) records from Task 8 are not merged into a run's generated output. A run only pulls in document-shaped sources. Worse than a missing feature: `_load_project_sources` (`tuneforge/jobs/runner.py`) calls `convert_document_cached` on *every* project source unconditionally, including a CSV/JSON one — that raises `UnsupportedDocumentError` outside the worker's `try/except`, so the run process dies without ever setting `run.status = "failed"`. Don't upload structured sources into a project that will run generation until this is fixed.
 - `POST /api/plans/{id}/research` (Task 6) has no HTTP endpoint yet — pending a decision on `httpx.AsyncClient` lifecycle ownership.
-- React UI (Task 13), Windows installer (Task 14), final verification pass (Task 15): not started.
+- React UI (Task 13): functionally done (setup through export) except a dedicated styling/WCAG-AA pass. Windows installer (Task 14), final verification pass (Task 15): not started.
+- `OpenAICompatibleProvider` (`tuneforge/providers/openai_compatible.py`) builds request URLs as `f"{base_url}/chat/completions"` / `f"{base_url}/models"` — the full API path must already be in `base_url` (e.g. `http://127.0.0.1:11434/v1` for Ollama, `https://generativelanguage.googleapis.com/v1beta/openai` for Gemini). It does not assume or append `/v1` itself.
 
 ## Testing conventions
 

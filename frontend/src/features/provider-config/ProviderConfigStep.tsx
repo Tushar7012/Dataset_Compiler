@@ -43,7 +43,13 @@ export function ProviderConfigStep({ projectId, onProviderReady }: ProviderConfi
         <input id="provider-name" value={name} onChange={(event) => setName(event.target.value)} />
 
         <label htmlFor="provider-base-url">Base URL</label>
-        <input id="provider-base-url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
+        <input
+          id="provider-base-url"
+          value={baseUrl}
+          onChange={(event) => setBaseUrl(event.target.value)}
+          placeholder="e.g. http://127.0.0.1:11434/v1 or https://generativelanguage.googleapis.com/v1beta/openai"
+        />
+        <small>Include the full API path — it is appended with /chat/completions and /models exactly as written, nothing is added automatically.</small>
 
         <label htmlFor="provider-model">Model</label>
         <input id="provider-model" value={model} onChange={(event) => setModel(event.target.value)} />
@@ -58,7 +64,7 @@ export function ProviderConfigStep({ projectId, onProviderReady }: ProviderConfi
           <option value="remote">Remote</option>
         </select>
 
-        <label htmlFor="provider-api-key">API key (optional)</label>
+        <label htmlFor="provider-api-key">API key (optional — leave blank to use the pre-configured Gemini key)</label>
         <input
           id="provider-api-key"
           type="password"
