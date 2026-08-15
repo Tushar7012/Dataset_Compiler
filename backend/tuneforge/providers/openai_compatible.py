@@ -43,11 +43,14 @@ class OpenAICompatibleProvider:
             headers["Authorization"] = f"Bearer {get_api_key(self.profile.credential_reference)}"
         return headers
 
+    def _url(self, path: str) -> str:
+        return f"{self.profile.base_url.rstrip('/')}/{path}"
+
     async def health(self) -> ProviderHealth:
         request_id = uuid.uuid4().hex
         logger.info("provider health check request_id=%s provider=%s", request_id, self.profile.name)
         try:
-            response = await self._client.get("/v1/models", headers=self._headers(request_id))
+            response = await self._client.get(self._url("models"), headers=self._headers(request_id))
         except httpx.HTTPError as exc:
             return ProviderHealth(healthy=False, detail=f"request failed: {type(exc).__name__}")
         if response.status_code == 200:
@@ -85,7 +88,7 @@ class OpenAICompatibleProvider:
             )
             try:
                 response = await self._client.post(
-                    "/v1/chat/completions", json=payload, headers=self._headers(request_id)
+                    self._url("chat/completions"), json=payload, headers=self._headers(request_id)
                 )
             except httpx.TimeoutException:
                 if attempt > _MAX_RETRIES:

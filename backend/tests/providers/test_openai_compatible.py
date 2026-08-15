@@ -14,12 +14,12 @@ from tuneforge.providers.openai_compatible import (
 from tuneforge.providers.protocol import GenerationRequest, ProviderProfile, RunConsent
 
 
-def make_provider(handler, *, endpoint_scope="local", credential_reference=None):
+def make_provider(handler, *, endpoint_scope="local", credential_reference=None, base_url="http://127.0.0.1:9999"):
     transport = httpx.MockTransport(handler)
-    client = httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:9999")
+    client = httpx.AsyncClient(transport=transport, base_url=base_url)
     profile = ProviderProfile(
         name="test",
-        base_url="http://127.0.0.1:9999",
+        base_url=base_url,
         model="test-model",
         endpoint_scope=endpoint_scope,
         credential_reference=credential_reference,
@@ -112,6 +112,34 @@ async def test_remote_provider_allows_generation_with_consent():
         GenerationRequest(messages=[{"role": "user", "content": "hi"}]), consent=consent
     )
     assert result.content == "ok"
+
+
+async def test_generate_posts_to_full_base_url_path_not_a_hardcoded_v1_prefix():
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    provider = make_provider(handler, base_url="http://127.0.0.1:9999/v1beta/openai")
+
+    await provider.generate(GenerationRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert captured["url"] == "http://127.0.0.1:9999/v1beta/openai/chat/completions"
+
+
+async def test_health_check_hits_full_base_url_path_not_a_hardcoded_v1_prefix():
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json={"data": []})
+
+    provider = make_provider(handler, base_url="http://127.0.0.1:9999/v1beta/openai")
+
+    await provider.health()
+
+    assert captured["url"] == "http://127.0.0.1:9999/v1beta/openai/models"
 
 
 async def test_generate_logs_do_not_contain_prompt_or_credentials(caplog, monkeypatch):
