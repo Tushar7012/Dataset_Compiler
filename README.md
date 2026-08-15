@@ -38,13 +38,6 @@ uv run python -m tuneforge.main
 
 Serves on `http://127.0.0.1:8420`. `/api/health` and `/api/version` are public.
 
-## Security constraints
-
-- Loopback bind only, strict origin checking, redacted logs.
-- API keys stored in Windows Credential Manager only — never SQLite, logs, or exports.
-- Remote provider calls require explicit per-run consent before any document text is sent.
-- DPO requires a judge model distinct from the generator model.
-
 ## Repo layout
 
 ```
