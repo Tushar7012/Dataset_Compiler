@@ -15,7 +15,7 @@ from tuneforge.providers.protocol import ProviderProfile, RunConsent
 from tuneforge.records import SourceRecord
 from tuneforge.storage.artifacts import ArtifactStore
 from tuneforge.storage.db import create_session_factory, create_sqlite_engine
-from tuneforge.storage.models import ProviderProfileRecord, RunRecord, TrainingPlanRecord
+from tuneforge.storage.models import ModelProfileRecord, ProviderProfileRecord, RunRecord, TrainingPlanRecord
 from tuneforge.storage.repositories import ProjectRepository
 
 
@@ -77,7 +77,16 @@ def env(tmp_path: Path):
         id=uuid.uuid4(), project_id=project.id, name="gen", base_url="http://127.0.0.1:9999",
         model="test-model", endpoint_scope="local",
     )
-    session.add_all([plan_record, provider_record])
+    model_profile_record = ModelProfileRecord(
+        id=uuid.uuid4(), project_id=project.id, model_id="gpt2", source="huggingface",
+        profile_json={
+            "source": "huggingface", "model_id": "gpt2", "architecture": "GPT2LMHeadModel", "model_type": "gpt2",
+            "is_causal_lm": True, "is_chat_model": False, "chat_template_found": False, "context_length": 512,
+            "modalities": ["text"], "evidence": [], "confidence": 0.9,
+        },
+        confidence=0.9,
+    )
+    session.add_all([plan_record, provider_record, model_profile_record])
     session.commit()
 
     run = RunRecord(
@@ -244,14 +253,9 @@ def test_worker_builds_consent_from_the_runs_remote_consent_timestamp(env, monke
 
     captured = {}
 
-    class _FakeProfile:
-        model_id = "gpt2"
-        context_length = 512
-
     class _FakeTok:
         tokenizer = object()
 
-    monkeypatch.setattr("tuneforge.models.analyzer.analyze_model", lambda model_id, *, source: _FakeProfile())
     monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
     monkeypatch.setattr(
         "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
@@ -277,14 +281,9 @@ def test_worker_builds_no_consent_when_none_was_granted(env, monkeypatch):
 
     captured = {}
 
-    class _FakeProfile:
-        model_id = "gpt2"
-        context_length = 512
-
     class _FakeTok:
         tokenizer = object()
 
-    monkeypatch.setattr("tuneforge.models.analyzer.analyze_model", lambda model_id, *, source: _FakeProfile())
     monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
     monkeypatch.setattr(
         "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []

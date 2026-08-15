@@ -169,9 +169,9 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
     import asyncio
 
     from tuneforge.ingestion.chunking import build_tokenizer
-    from tuneforge.models.analyzer import analyze_model
+    from tuneforge.models.analyzer import ModelProfile
     from tuneforge.storage.artifacts import ArtifactStore
-    from tuneforge.storage.models import TrainingPlanRecord
+    from tuneforge.storage.models import ModelProfileRecord, TrainingPlanRecord
 
     engine = create_sqlite_engine(Path(db_path))
     session = create_session_factory(engine)()
@@ -184,7 +184,20 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
     generator = _load_provider(session, run.generator_profile_id)
     judge = _load_provider(session, run.judge_profile_id) if run.judge_profile_id else None
 
-    model_profile = analyze_model(plan_record.plan_json.get("model_id", ""), source="huggingface")
+    # TrainingPlan has no model_id field of its own — the analyzed model
+    # profile lives on ModelProfileRecord, keyed by project, not by plan.
+    # Reuse the same "most recent analysis for this project" lookup
+    # api/exports.py already relies on, rather than re-analyzing from a
+    # plan_json key that was never actually populated.
+    model_profile_record = (
+        session.query(ModelProfileRecord)
+        .filter(ModelProfileRecord.project_id == run.project_id)
+        .order_by(ModelProfileRecord.created_at.desc())
+        .first()
+    )
+    if model_profile_record is None:
+        raise RuntimeError(f"no analyzed model found for project {run.project_id}")
+    model_profile = ModelProfile.model_validate(model_profile_record.profile_json)
     tokenizer = build_tokenizer(model_profile.model_id)
     sources = _load_project_sources(session, artifact_store, run.project_id, tokenizer)
 
