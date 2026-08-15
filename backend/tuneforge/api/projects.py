@@ -57,7 +57,7 @@ async def upload_source(
     # uploads of files that share a name.
     upload_dir = Path(project.storage_path) / "_incoming" / uuid.uuid4().hex
     upload_dir.mkdir(parents=True, exist_ok=True)
-    upload_path = upload_dir / (file.filename or "upload")
+    upload_path = upload_dir / Path(file.filename or "upload").name
     upload_path.write_bytes(await file.read())
     try:
         source = SourceRepository(session, artifact_store).add_source(project_id, upload_path)

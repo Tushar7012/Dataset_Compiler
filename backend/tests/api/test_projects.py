@@ -63,3 +63,20 @@ def test_upload_source_to_unknown_project_returns_404(client):
         files={"file": ("policy.md", b"content", "text/markdown")},
     )
     assert response.status_code == 404
+
+
+def test_upload_source_rejects_path_traversal_in_filename(client, tmp_path):
+    create_response = client.post("/api/projects", json={"name": "proj"})
+    project_id = create_response.json()["id"]
+
+    response = client.post(
+        f"/api/projects/{project_id}/sources",
+        files={"file": ("../../../../../../outside_marker.txt", b"payload", "text/plain")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["filename"] == "outside_marker.txt"
+    assert not list(tmp_path.rglob("outside_marker.txt"))
+    assert not any(
+        (parent / "outside_marker.txt").exists() for parent in [tmp_path.parent, tmp_path.parent.parent]
+    )
