@@ -2,13 +2,7 @@
 
 Windows-first local web app. Turn documents (PDF, DOCX, HTML, Markdown, TXT, CSV, JSON, JSONL) into validated, model-aware training datasets (CPT, SFT prompt-completion, SFT conversation, DPO) for fine-tuning.
 
-Local-only. Binds to `127.0.0.1`, never `0.0.0.0`. No document text or credentials leave your machine unless you explicitly approve a remote provider call.
-
-## Status
-
-Backend logic (Tasks 1-12 of `PLAN.md`) built, tested, pushed. React UI (Task 13), Windows installer (Task 14), final verification (Task 15) not started. Full REST API wiring in progress (`plan_7.md`).
-
-193+ backend tests passing. No app UI yet — backend is a tested library, not yet a clickable tool.
+Local-only. Binds to `127.0.0.1`, never `0.0.0.0`.
 
 ## Architecture
 
@@ -42,7 +36,7 @@ cd backend
 uv run python -m tuneforge.main
 ```
 
-Serves on `http://127.0.0.1:8420`. `/api/health` and `/api/version` are public; everything else needs a bearer session token (issued at launch, held in memory only).
+Serves on `http://127.0.0.1:8420`. `/api/health` and `/api/version` are public.
 
 ## Security constraints
 
@@ -56,11 +50,4 @@ Serves on `http://127.0.0.1:8420`. `/api/health` and `/api/version` are public; 
 ```
 backend/    FastAPI app, all business logic (tuneforge/), tests
 frontend/   React + Vite + TypeScript shell
-plan_*.md   Implementation plans, one per work session, task-by-task with tests
-PLAN.md     Master spec — all 15 tasks, canonical data contracts, API surface
 ```
-
-## Docs
-
-- `PLAN.md` — master spec.
-- `plan_1.md` through `plan_7.md` — implementation history, one file per delivered chunk of work, each with real code and tests an executing AI followed task-by-task.
