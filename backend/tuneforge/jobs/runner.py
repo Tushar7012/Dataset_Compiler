@@ -220,23 +220,29 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
         else None
     )
 
-    asyncio.run(
-        _run_generation_async(
-            session=session,
-            run=run,
-            plan=plan,
-            sources=sources,
-            generator=generator,
-            judge=judge,
-            spec=GenerationSpec(desired_behavior=plan.objective),
-            tokenizer=tokenizer.tokenizer,
-            max_tokens=model_profile.context_length or 2048,
-            target_rows=target_rows,
-            resume_from_chunk=resume_from_chunk,
-            output_path=output_path,
-            consent=consent,
+    try:
+        asyncio.run(
+            _run_generation_async(
+                session=session,
+                run=run,
+                plan=plan,
+                sources=sources,
+                generator=generator,
+                judge=judge,
+                spec=GenerationSpec(desired_behavior=plan.objective),
+                tokenizer=tokenizer.tokenizer,
+                max_tokens=model_profile.context_length or 2048,
+                target_rows=target_rows,
+                resume_from_chunk=resume_from_chunk,
+                output_path=output_path,
+                consent=consent,
+            )
         )
-    )
+    except Exception:
+        logger.exception("run %s failed", run.id)
+        run.status = "failed"
+        session.commit()
+        raise
 
 
 def start_run(*, db_path: Path, base_data_dir: Path, run_id: uuid.UUID) -> multiprocessing.Process:

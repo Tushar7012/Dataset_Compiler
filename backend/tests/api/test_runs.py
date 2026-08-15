@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from tuneforge.api import plans as plans_api
 from tuneforge.api.runs import router
+from tuneforge.jobs.runner import run_output_path
 from tuneforge.storage.artifacts import ArtifactStore
 from tuneforge.storage.db import create_session_factory, create_sqlite_engine
 from tuneforge.storage.models import ProviderProfileRecord, RunRecord, TrainingPlanRecord
@@ -344,3 +345,63 @@ def test_approve_full_accepts_remote_generator_with_consent_and_stores_the_times
     session = _session(client)
     full_run = session.get(RunRecord, uuid.UUID(response.json()["id"]))
     assert full_run.remote_consent_granted_at is not None
+
+
+def test_list_run_records_returns_up_to_limit_accepted_rows(client):
+    session = _session(client)
+    project = ProjectRepository(session, client.artifact_store).create("proj")
+    plan = TrainingPlanRecord(
+        id=uuid.uuid4(), project_id=project.id, objective="cpt",
+        plan_json={"objective": "cpt", "canonical_schema": "CPTRecord"}, plan_hash="hash1",
+    )
+    provider = ProviderProfileRecord(
+        id=uuid.uuid4(), project_id=project.id, name="gen", base_url="http://127.0.0.1:9999",
+        model="test-model", endpoint_scope="local",
+    )
+    session.add_all([plan, provider])
+    session.commit()
+    run = RunRecord(
+        id=uuid.uuid4(), project_id=project.id, plan_id=plan.id, generator_profile_id=provider.id,
+        status="completed", completed_rows=3, total_rows=3,
+    )
+    session = _session(client)
+    session.add(run)
+    session.commit()
+
+    output_path = run_output_path(client.artifact_store.base_dir, project.id, run.id)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
+        for i in range(3):
+            f.write(json.dumps({"text": f"row {i}", "metadata": {"chunk_id": f"c{i}"}}))
+            f.write("\n")
+
+    response = client.get(f"/api/runs/{run.id}/records?limit=2")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["records"]) == 2
+    assert body["records"][0]["text"] == "row 0"
+    assert body["total_accepted"] == 3
+    assert body["canonical_schema"] == "CPTRecord"
+
+
+def test_list_run_records_returns_empty_list_before_any_rows_written(client):
+    session = _session(client)
+    project = ProjectRepository(session, client.artifact_store).create("proj")
+    plan, provider = _make_plan_and_provider(client, project.id)
+    run = RunRecord(
+        id=uuid.uuid4(), project_id=project.id, plan_id=plan.id, generator_profile_id=provider.id, status="running",
+    )
+    session = _session(client)
+    session.add(run)
+    session.commit()
+
+    response = client.get(f"/api/runs/{run.id}/records")
+
+    assert response.status_code == 200
+    assert response.json()["records"] == []
+
+
+def test_list_run_records_for_unknown_run_returns_404(client):
+    response = client.get(f"/api/runs/{uuid.uuid4()}/records")
+    assert response.status_code == 404

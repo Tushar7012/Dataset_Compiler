@@ -92,3 +92,26 @@ export interface ProviderProfile {
   name: string
   endpoint_scope: EndpointScope
 }
+
+export type RunStatus = 'pending' | 'running' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed'
+
+export interface RunSummary {
+  id: string
+  status: RunStatus
+  completed_rows: number
+  total_rows: number
+  is_preview: boolean
+  assurance_level: string | null
+}
+
+export interface RunCreated {
+  id: string
+  status: RunStatus
+  is_preview: boolean
+}
+
+export interface RunRecordsResponse {
+  canonical_schema: string | null
+  records: Record<string, unknown>[]
+  total_accepted: number
+}

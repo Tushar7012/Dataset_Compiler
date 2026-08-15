@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from tuneforge.api.deps import get_session
-from tuneforge.jobs.runner import is_run_process_alive, start_run
+from tuneforge.api.deps import get_artifact_store, get_session
+from tuneforge.jobs.runner import is_run_process_alive, run_output_path, start_run
+from tuneforge.storage.artifacts import ArtifactStore
 from tuneforge.storage.models import ProviderProfileRecord, RunRecord, TrainingPlanRecord
 
 router = APIRouter()
@@ -183,3 +184,31 @@ async def stream_events(run_id: uuid.UUID, request: Request, session: Session = 
             await asyncio.sleep(0.5)
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
+
+
+@router.get("/runs/{run_id}/records")
+async def list_run_records(
+    run_id: uuid.UUID,
+    limit: int = 20,
+    session: Session = Depends(get_session),
+    artifact_store: ArtifactStore = Depends(get_artifact_store),
+):
+    run = _get_run_or_404(session, run_id)
+    plan = session.get(TrainingPlanRecord, run.plan_id)
+
+    output_path = run_output_path(artifact_store.base_dir, run.project_id, run.id)
+    records: list[dict] = []
+    if output_path.exists():
+        with output_path.open(encoding="utf-8") as f:
+            for line in f:
+                if len(records) >= limit:
+                    break
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+
+    return {
+        "canonical_schema": plan.plan_json.get("canonical_schema"),
+        "records": records,
+        "total_accepted": run.completed_rows,
+    }

@@ -300,6 +300,33 @@ def test_worker_builds_no_consent_when_none_was_granted(env, monkeypatch):
     assert captured["consent"] is None
 
 
+def test_worker_marks_run_failed_on_unhandled_exception(env, monkeypatch):
+    session, artifact_store, project, run = env
+    db_path = session.get_bind().url.database
+    session.close()
+
+    class _FakeTok:
+        tokenizer = object()
+
+    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
+    monkeypatch.setattr(
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+    )
+    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
+
+    async def fake_run_generation_async(**kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("tuneforge.jobs.runner._run_generation_async", fake_run_generation_async)
+
+    with pytest.raises(RuntimeError):
+        run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
+
+    check_session = create_session_factory(create_sqlite_engine(Path(db_path)))()
+    stored = check_session.get(RunRecord, run.id)
+    assert stored.status == "failed"
+
+
 def test_worker_process_can_be_spawned_and_joins_cleanly(tmp_path):
     # Proves the process-spawning plumbing (module-level target, spawn
     # context, picklable arguments) actually works on this platform —

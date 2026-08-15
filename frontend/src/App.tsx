@@ -4,15 +4,21 @@ import { ModelSelectionStep } from './features/model-selection/ModelSelectionSte
 import { GoalWizardStep } from './features/goal-wizard/GoalWizardStep'
 import { PlanConfirmationStep } from './features/plan-confirmation/PlanConfirmationStep'
 import { ProviderConfigStep } from './features/provider-config/ProviderConfigStep'
-import type { ModelProfileResponse, Project, TrainingPlanResponse } from './api/types'
+import { PreviewStep } from './features/preview/PreviewStep'
+import { RunProgressStep } from './features/run-progress/RunProgressStep'
+import { ExportStep } from './features/export/ExportStep'
+import type { ModelProfileResponse, Project, ProviderProfile, TrainingPlanResponse } from './api/types'
 
-type WizardStep = 'project' | 'model' | 'goal' | 'plan' | 'provider'
+type WizardStep = 'project' | 'model' | 'goal' | 'plan' | 'provider' | 'preview' | 'progress' | 'export'
 
 function App() {
   const [step, setStep] = useState<WizardStep>('project')
   const [project, setProject] = useState<Project | null>(null)
   const [modelProfile, setModelProfile] = useState<ModelProfileResponse | null>(null)
   const [plan, setPlan] = useState<TrainingPlanResponse | null>(null)
+  const [provider, setProvider] = useState<ProviderProfile | null>(null)
+  const [remoteConsentGranted, setRemoteConsentGranted] = useState(false)
+  const [fullRunId, setFullRunId] = useState<string | null>(null)
 
   return (
     <main>
@@ -61,11 +67,36 @@ function App() {
       {step === 'provider' && project && (
         <ProviderConfigStep
           projectId={project.id}
-          onProviderReady={() => {
-            // Preview, run progress, and export are plan_10.md's scope.
+          onProviderReady={(readyProvider, consentGranted) => {
+            setProvider(readyProvider)
+            setRemoteConsentGranted(consentGranted)
+            setStep('preview')
           }}
         />
       )}
+
+      {step === 'preview' && plan && provider && (
+        <PreviewStep
+          planId={plan.id}
+          generatorProfileId={provider.id}
+          remoteConsentGranted={remoteConsentGranted}
+          onApprovedFull={(fullRun) => {
+            setFullRunId(fullRun.id)
+            setStep('progress')
+          }}
+        />
+      )}
+
+      {step === 'progress' && fullRunId && (
+        <RunProgressStep
+          runId={fullRunId}
+          onCompleted={() => {
+            setStep('export')
+          }}
+        />
+      )}
+
+      {step === 'export' && fullRunId && <ExportStep runId={fullRunId} />}
     </main>
   )
 }
