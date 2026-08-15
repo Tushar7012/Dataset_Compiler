@@ -88,6 +88,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def version():
         return {"version": settings.app_version}
 
+    @app.get("/api/session")
+    async def session_bootstrap():
+        """Let the SPA learn the process-generated session token.
+
+        Unauthenticated by design — there is no other way for the browser to
+        ever obtain the token before making its first authenticated request.
+        Safe because the enforce_origin middleware above already rejects any
+        request whose Origin doesn't match this app's own origin, and the
+        app only ever binds to 127.0.0.1: only this machine's browser, on
+        this exact origin, can reach it.
+        """
+        return {"token": app.state.session_token}
+
     @app.get("/api/echo-session", dependencies=[Depends(require_session)])
     async def echo_session():
         return {"status": "ok"}

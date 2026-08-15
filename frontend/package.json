@@ -12,6 +12,8 @@
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.4",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
@@ -21,5 +23,8 @@
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.0.16"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.4"
   }
 }

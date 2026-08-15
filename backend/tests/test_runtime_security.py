@@ -25,6 +25,27 @@ def test_health_is_public():
     assert resp.json() == {"status": "ok"}
 
 
+def test_session_bootstrap_returns_token_without_auth_header():
+    app, client = make_client()
+    resp = client.get("/api/session")
+    assert resp.status_code == 200
+    assert resp.json() == {"token": app.state.session_token}
+
+
+def test_session_bootstrap_rejects_mismatched_origin():
+    _, client = make_client()
+    resp = client.get("/api/session", headers={"Origin": "http://evil.example.com"})
+    assert resp.status_code == 403
+
+
+def test_session_bootstrap_allows_matching_origin():
+    app, client = make_client()
+    origin = f"http://127.0.0.1:{app.state.settings.port}"
+    resp = client.get("/api/session", headers={"Origin": origin})
+    assert resp.status_code == 200
+    assert resp.json() == {"token": app.state.session_token}
+
+
 def test_version_reports_configured_version():
     app, client = make_client()
     resp = client.get("/api/version")
