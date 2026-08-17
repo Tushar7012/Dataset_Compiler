@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from tuneforge.api.providers import GEMINI_API_KEY_CREDENTIAL_NAME, router
+from tuneforge.models.analyzer import HF_TOKEN_CREDENTIAL_NAME
 from tuneforge.security.credentials import CredentialNotFoundError
 from tuneforge.storage.artifacts import ArtifactStore
 from tuneforge.storage.db import create_session_factory, create_sqlite_engine
@@ -84,6 +85,24 @@ def test_remote_provider_without_api_key_falls_back_to_preconfigured_credential(
     session = client.session_factory()
     stored = session.query(ProviderProfileRecord).one()
     assert stored.credential_reference == GEMINI_API_KEY_CREDENTIAL_NAME
+
+
+def test_hf_router_provider_without_api_key_falls_back_to_hf_token_credential(client, monkeypatch):
+    monkeypatch.setattr("tuneforge.api.providers.get_api_key", lambda name: "preconfigured-key")
+
+    response = client.post(
+        "/api/providers",
+        json={
+            "project_id": str(_project_id(client)), "name": "hf-router-judge",
+            "base_url": "https://router.huggingface.co/v1",
+            "model": "Qwen/Qwen3-235B-A22B-Thinking-2507", "endpoint_scope": "remote",
+        },
+    )
+
+    assert response.status_code == 201
+    session = client.session_factory()
+    stored = session.query(ProviderProfileRecord).one()
+    assert stored.credential_reference == HF_TOKEN_CREDENTIAL_NAME
 
 
 def test_remote_provider_without_api_key_or_preconfigured_credential_stores_none(client, monkeypatch):
