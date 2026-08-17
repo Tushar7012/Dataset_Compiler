@@ -322,3 +322,98 @@ def test_approve_sets_approved_at(client):
     session = client.session_factory()
     stored = session.query(TrainingPlanRecord).one()
     assert stored.approved_at is not None
+
+
+def _stub_research_analyze(monkeypatch, model_profile_record):
+    from tuneforge.models.analyzer import ModelProfile
+
+    profile = ModelProfile.model_validate(model_profile_record.profile_json)
+    monkeypatch.setattr("tuneforge.research.resolver.analyze_model", lambda *args, **kwargs: profile)
+
+
+def test_research_returns_404_for_unknown_plan(client, monkeypatch):
+    project_id = _project_id(client)
+    model_profile_record = _stored_model_profile(client, project_id)
+    _stub_research_analyze(monkeypatch, model_profile_record)
+    response = client.post(
+        f"/api/plans/{uuid.uuid4()}/research",
+        json={
+            "project_id": str(project_id), "model_profile_id": str(model_profile_record.id),
+            "goal": "domain_adaptation", "desired_behavior": "x", "language": "en", "target_rows": 100,
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_research_returns_a_new_plan_when_the_retry_succeeds(client, monkeypatch):
+    # _stored_model_profile's fixture model (meta-llama/Llama-3-8B) has
+    # chat_template_found=False — a multi_turn_conversation goal fails
+    # ChatTemplateRequiredError on the first attempt inside resolve_rejected_recommendation
+    # too, same as it would on /plans/recommend. Use domain_adaptation (cpt)
+    # instead so the *local* recheck succeeds without ever needing the network
+    # call — proves the "recheck local metadata first" behavior end to end
+    # without needing to mock an HF model-card fetch for this test.
+    project_id = _project_id(client)
+    model_profile_record = _stored_model_profile(client, project_id)
+    _stub_research_analyze(monkeypatch, model_profile_record)
+    rejected = client.post(
+        "/api/plans/recommend",
+        json={
+            "project_id": str(project_id), "model_profile_id": str(model_profile_record.id),
+            "goal": "domain_adaptation", "desired_behavior": "x", "language": "en", "target_rows": 100,
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/plans/{rejected['id']}/research",
+        json={
+            "project_id": str(project_id), "model_profile_id": str(model_profile_record.id),
+            "goal": "domain_adaptation", "desired_behavior": "x", "language": "en", "target_rows": 200,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["objective"] == "cpt"
+    assert body["citations"] == []
+    assert body["requires_manual_selection"] is False
+
+
+def test_research_fetches_official_evidence_when_local_recheck_still_fails(client, monkeypatch):
+    from datetime import datetime, timezone
+
+    from tuneforge.research.official_sources import FetchedSource
+
+    project_id = _project_id(client)
+    model_profile_record = _stored_model_profile(client, project_id)  # chat_template_found=False
+    _stub_research_analyze(monkeypatch, model_profile_record)
+    rejected = client.post(
+        "/api/plans/recommend",
+        json={
+            "project_id": str(project_id), "model_profile_id": str(model_profile_record.id),
+            "goal": "domain_adaptation", "desired_behavior": "x", "language": "en", "target_rows": 100,
+        },
+    ).json()
+
+    fake_source = FetchedSource(
+        url="https://huggingface.co/meta-llama/Llama-3-8B/blob/main/README.md",
+        retrieved_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        sha256="deadbeef",
+        excerpt="no chat template documented",
+    )
+    # Patch where resolve_rejected_recommendation looks up the name — not plans.py's
+    # unused import (plans imports it for monkeypatch compatibility with the plan's note,
+    # but the call site is resolver.py).
+    monkeypatch.setattr("tuneforge.research.resolver.fetch_model_card_readme", lambda model_id: fake_source)
+
+    response = client.post(
+        f"/api/plans/{rejected['id']}/research",
+        json={
+            "project_id": str(project_id), "model_profile_id": str(model_profile_record.id),
+            "goal": "multi_turn_conversation", "desired_behavior": "x", "language": "en", "target_rows": 100,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plan"] is None
+    assert body["requires_manual_selection"] is True
+    assert len(body["citations"]) == 1
