@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
 import { ApiError } from '../../api/client'
 import { GoalWizardStep } from './GoalWizardStep'
@@ -44,6 +45,15 @@ describe('GoalWizardStep', () => {
     expect(screen.queryByLabelText(/target rows/i)).not.toBeInTheDocument()
     expect(await screen.findByText('42')).toBeInTheDocument()
   })
+
+  it('has no axe-detectable accessibility violations', async () => {
+    const { container } = renderWithProviders(
+      <GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />,
+    )
+    await screen.findByLabelText(/training goal/i)
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  }, 10_000)
 
   it('shows a truncation warning when the estimate exceeds the accepted-row cap', async () => {
     mockEstimateRows.mockResolvedValue({ total_rows: 150_000, truncated: true, capped_at: 100_000 })

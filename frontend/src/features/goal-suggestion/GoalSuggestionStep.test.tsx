@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
 import { ApiError } from '../../api/client'
 import { GoalSuggestionStep } from './GoalSuggestionStep'
@@ -30,6 +31,15 @@ describe('GoalSuggestionStep', () => {
     expect(screen.getByRole('button', { name: /get ai suggestion/i })).toBeDisabled()
     expect(mockSuggestGoal).not.toHaveBeenCalled()
   })
+
+  it('has no axe-detectable accessibility violations', async () => {
+    const { container } = renderWithProviders(
+      <GoalSuggestionStep projectId="proj-1" onDecision={vi.fn()} />,
+    )
+    await screen.findByRole('button', { name: /get ai suggestion/i })
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  }, 10_000)
 
   it('calls suggestGoal once consent is checked and the button is clicked', async () => {
     const user = userEvent.setup()

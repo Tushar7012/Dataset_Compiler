@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
 import { ApiError } from '../../api/client'
 import { ExportStep } from './ExportStep'
@@ -27,6 +28,13 @@ describe('ExportStep', () => {
     expect(screen.getByRole('button', { name: /download export/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /unsloth/i })).toBeInTheDocument()
   })
+
+  it('has no axe-detectable accessibility violations', async () => {
+    const { container } = renderWithProviders(<ExportStep runId="run-1" />)
+    await screen.findByRole('button', { name: /download export/i })
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  }, 10_000)
 
   it('exports then downloads the bundle on click', async () => {
     const user = userEvent.setup()

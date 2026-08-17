@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
 import { ApiError } from '../../api/client'
 import { PreviewStep } from './PreviewStep'
@@ -34,6 +35,20 @@ describe('PreviewStep', () => {
     )
     expect(screen.getByRole('button', { name: /generate preview/i })).toBeInTheDocument()
   })
+
+  it('has no axe-detectable accessibility violations', async () => {
+    const { container } = renderWithProviders(
+      <PreviewStep
+        planId="plan-1"
+        generatorProfileId="prov-1"
+        remoteConsentGranted={false}
+        onApprovedFull={vi.fn()}
+      />,
+    )
+    await screen.findByRole('button', { name: /generate preview/i })
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  }, 10_000)
 
   it('creates the preview, streams progress, and shows accepted rows on completion', async () => {
     const user = userEvent.setup()

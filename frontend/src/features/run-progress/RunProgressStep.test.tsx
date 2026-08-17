@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
 import { ApiError } from '../../api/client'
 import { RunProgressStep } from './RunProgressStep'
@@ -33,6 +34,16 @@ describe('RunProgressStep', () => {
     expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /resume/i })).not.toBeInTheDocument()
   })
+
+  it('has no axe-detectable accessibility violations', async () => {
+    mockSubscribe.mockImplementation(async (runId, onEvent) => {
+      onEvent({ run_id: runId, sequence: 0, stage: 'running', completed_rows: 40, total_rows: 100 })
+    })
+    const { container } = renderWithProviders(<RunProgressStep runId="run-1" onCompleted={vi.fn()} />)
+    await screen.findByRole('button', { name: /cancel/i })
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  }, 10_000)
 
   it('cancels the run when Cancel is clicked', async () => {
     const user = userEvent.setup()

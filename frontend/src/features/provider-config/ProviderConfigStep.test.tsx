@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
 import { ApiError } from '../../api/client'
 import { ProviderConfigStep } from './ProviderConfigStep'
@@ -24,6 +25,15 @@ describe('ProviderConfigStep', () => {
     expect(screen.getByLabelText(/api key/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/consent/i)).not.toBeInTheDocument()
   })
+
+  it('has no axe-detectable accessibility violations', async () => {
+    const { container } = renderWithProviders(
+      <ProviderConfigStep projectId="proj-1" onProviderReady={vi.fn()} />,
+    )
+    await screen.findByLabelText(/provider name/i)
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  }, 10_000)
 
   it('creates a local provider and enables Continue with no consent step', async () => {
     const user = userEvent.setup()

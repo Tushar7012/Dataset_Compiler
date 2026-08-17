@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
 import { ApiError } from '../../api/client'
 import { ColumnMappingStep } from './ColumnMappingStep'
@@ -34,6 +35,21 @@ describe('ColumnMappingStep', () => {
     expect(screen.getByRole('button', { name: /preview normalized rows/i })).toBeInTheDocument()
     expect(screen.queryByLabelText('prompt')).not.toBeInTheDocument()
   })
+
+  it('has no axe-detectable accessibility violations', async () => {
+    mockGetSourceSchema.mockResolvedValue({
+      schema_name: 'prompt_completion',
+      confidence: 1.0,
+      matched_keys: ['prompt', 'completion'],
+      columns: ['prompt', 'completion'],
+    })
+    const { container } = renderWithProviders(
+      <ColumnMappingStep projectId="proj-1" sourceId="src-1" onSchemaConfirmed={vi.fn()} />,
+    )
+    await screen.findByRole('button', { name: /preview normalized rows/i })
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  }, 10_000)
 
   it('shows a mapping input per column when detection is inconclusive', async () => {
     mockGetSourceSchema.mockResolvedValue({

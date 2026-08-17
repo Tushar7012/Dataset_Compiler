@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
 import { PlanConfirmationStep } from './PlanConfirmationStep'
 
@@ -35,6 +36,13 @@ describe('PlanConfirmationStep', () => {
     expect(screen.getByText('500')).toBeInTheDocument()
     expect(screen.getByText(/structural, dedup/i)).toBeInTheDocument()
   })
+
+  it('has no axe-detectable accessibility violations', async () => {
+    const { container } = renderWithProviders(<PlanConfirmationStep plan={plan} onApproved={vi.fn()} />)
+    await screen.findByText('sft_conversation')
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  }, 10_000)
 
   it('approves the plan and calls onApproved', async () => {
     const user = userEvent.setup()

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
 import { ApiError } from '../../api/client'
 import { ProjectSetupStep } from './ProjectSetupStep'
@@ -41,6 +42,13 @@ describe('ProjectSetupStep', () => {
     expect(screen.getByLabelText(/project name/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/upload/i)).not.toBeInTheDocument()
   })
+
+  it('has no axe-detectable accessibility violations', async () => {
+    const { container } = renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
+    await screen.findByLabelText(/project name/i)
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  }, 10_000)
 
   it('creates the project and reveals the upload form', async () => {
     const user = userEvent.setup()

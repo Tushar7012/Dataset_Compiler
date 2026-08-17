@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
 import { ApiError } from '../../api/client'
 import { ModelSelectionStep } from './ModelSelectionStep'
@@ -38,6 +39,15 @@ describe('ModelSelectionStep', () => {
     expect(screen.getByRole('button', { name: /analyze/i })).toBeInTheDocument()
     expect(screen.queryByText(/architecture/i)).not.toBeInTheDocument()
   })
+
+  it('has no axe-detectable accessibility violations', async () => {
+    const { container } = renderWithProviders(
+      <ModelSelectionStep projectId="proj-1" onProfileReady={vi.fn()} />,
+    )
+    await screen.findByLabelText(/model/i)
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  }, 10_000)
 
   it('analyzes the model and displays its evidence', async () => {
     const user = userEvent.setup()
