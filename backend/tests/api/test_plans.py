@@ -417,3 +417,102 @@ def test_research_fetches_official_evidence_when_local_recheck_still_fails(clien
     assert body["plan"] is None
     assert body["requires_manual_selection"] is True
     assert len(body["citations"]) == 1
+
+
+def _rejected_plan_id(client, project_id, model_profile_record) -> str:
+    return client.post(
+        "/api/plans/recommend",
+        json={
+            "project_id": str(project_id), "model_profile_id": str(model_profile_record.id),
+            "goal": "domain_adaptation", "desired_behavior": "x", "language": "en", "target_rows": 100,
+        },
+    ).json()["id"]
+
+
+def test_research_missing_required_fields_returns_422(client, monkeypatch):
+    project_id = _project_id(client)
+    model_profile_record = _stored_model_profile(client, project_id)
+    _stub_research_analyze(monkeypatch, model_profile_record)
+    plan_id = _rejected_plan_id(client, project_id, model_profile_record)
+
+    response = client.post(f"/api/plans/{plan_id}/research", json={"project_id": str(project_id)})
+
+    assert response.status_code == 422
+
+
+def test_research_returns_404_for_unknown_model_profile(client, monkeypatch):
+    project_id = _project_id(client)
+    model_profile_record = _stored_model_profile(client, project_id)
+    _stub_research_analyze(monkeypatch, model_profile_record)
+    plan_id = _rejected_plan_id(client, project_id, model_profile_record)
+
+    response = client.post(
+        f"/api/plans/{plan_id}/research",
+        json={
+            "project_id": str(project_id), "model_profile_id": str(uuid.uuid4()),
+            "goal": "domain_adaptation", "desired_behavior": "x", "language": "en", "target_rows": 100,
+        },
+    )
+
+    assert response.status_code == 404
+
+
+def test_research_returns_422_for_malformed_model_profile_id(client, monkeypatch):
+    project_id = _project_id(client)
+    model_profile_record = _stored_model_profile(client, project_id)
+    _stub_research_analyze(monkeypatch, model_profile_record)
+    plan_id = _rejected_plan_id(client, project_id, model_profile_record)
+
+    response = client.post(
+        f"/api/plans/{plan_id}/research",
+        json={
+            "project_id": str(project_id), "model_profile_id": "not-a-uuid",
+            "goal": "domain_adaptation", "desired_behavior": "x", "language": "en", "target_rows": 100,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_research_returns_422_for_malformed_generator_profile_id(client, monkeypatch):
+    project_id = _project_id(client)
+    model_profile_record = _stored_model_profile(client, project_id)
+    _stub_research_analyze(monkeypatch, model_profile_record)
+    plan_id = _rejected_plan_id(client, project_id, model_profile_record)
+
+    response = client.post(
+        f"/api/plans/{plan_id}/research",
+        json={
+            "project_id": str(project_id), "model_profile_id": str(model_profile_record.id),
+            "goal": "domain_adaptation", "desired_behavior": "x", "language": "en", "target_rows": 100,
+            "generator_profile_id": "not-a-uuid",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_research_returns_409_when_dpo_lacks_a_distinct_judge(client, monkeypatch):
+    from tuneforge.models.analyzer import ModelProfile
+
+    project_id = _project_id(client)
+    model_profile_record = _stored_model_profile(client, project_id)
+    plan_id = _rejected_plan_id(client, project_id, model_profile_record)
+
+    # dpo needs chat_template_found=True to get past the earlier
+    # ChatTemplateRequiredError check (which resolve_rejected_recommendation
+    # swallows internally) before it can reach the distinct-judge check.
+    chat_profile = ModelProfile.model_validate(
+        {**model_profile_record.profile_json, "is_chat_model": True, "chat_template_found": True}
+    )
+    monkeypatch.setattr("tuneforge.research.resolver.analyze_model", lambda *args, **kwargs: chat_profile)
+
+    response = client.post(
+        f"/api/plans/{plan_id}/research",
+        json={
+            "project_id": str(project_id), "model_profile_id": str(model_profile_record.id),
+            "goal": "preference_alignment", "desired_behavior": "x", "language": "en", "target_rows": 100,
+        },
+    )
+
+    assert response.status_code == 409
