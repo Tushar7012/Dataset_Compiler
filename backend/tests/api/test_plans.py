@@ -136,6 +136,41 @@ def test_estimated_rows_for_unknown_model_profile_returns_404(client):
     assert response.status_code == 404
 
 
+def test_estimated_rows_returns_422_for_an_unparseable_document(client, tmp_path):
+    # /plans/suggest-goal already translates these ingestion errors into a
+    # clean 422 (plans.py) — estimated-rows hits the same _load_project_sources
+    # path but never had the same handling, so an unparseable source (or, as
+    # found via a real PDF during manual E2E testing, a genuine docling
+    # conversion failure) surfaced as an unhandled 500.
+    from tuneforge.models.analyzer import ModelProfile
+    from tuneforge.storage.repositories import SourceRepository
+
+    project_id = _project_id(client)
+    session = client.session_factory()
+    profile = ModelProfile(
+        source="huggingface", model_id="gpt2", architecture="GPT2LMHeadModel", model_type="gpt2",
+        is_causal_lm=True, is_chat_model=False, chat_template_found=False, context_length=1024,
+        modalities=["text"], evidence=[], confidence=0.9,
+    )
+    model_profile_record = ModelProfileRecord(
+        id=uuid.uuid4(), project_id=project_id, model_id=profile.model_id, source=profile.source,
+        profile_json=json.loads(profile.model_dump_json()), confidence=profile.confidence,
+    )
+    session.add(model_profile_record)
+    session.commit()
+
+    doc_path = tmp_path / "bad.xyz"
+    doc_path.write_text("not a real document")
+    SourceRepository(session, client.artifact_store).add_source(project_id, doc_path)
+
+    response = client.get(
+        "/api/plans/estimated-rows",
+        params={"project_id": str(project_id), "model_profile_id": str(model_profile_record.id)},
+    )
+
+    assert response.status_code == 422
+
+
 def _upload_doc_source(client, project_id, tmp_path, text="# HR Policy\n\nThis handbook covers leave and conduct.\n"):
     from tuneforge.storage.repositories import SourceRepository
 

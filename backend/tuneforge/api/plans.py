@@ -152,10 +152,26 @@ async def estimated_rows(
     model_profile = ModelProfile.model_validate(model_profile_record.profile_json)
 
     from tuneforge.ingestion.chunking import build_tokenizer
+    from tuneforge.ingestion.documents import (
+        CorruptDocumentError,
+        EmptyDocumentError,
+        EncryptedDocumentError,
+        OversizedDocumentError,
+        UnsupportedDocumentError,
+    )
     from tuneforge.jobs.runner import estimate_total_rows
 
     tokenizer = build_tokenizer(model_profile.model_id)
-    estimate = estimate_total_rows(session, artifact_store, project_id, tokenizer)
+    try:
+        estimate = estimate_total_rows(session, artifact_store, project_id, tokenizer)
+    except (
+        UnsupportedDocumentError,
+        EmptyDocumentError,
+        OversizedDocumentError,
+        EncryptedDocumentError,
+        CorruptDocumentError,
+    ) as exc:
+        raise HTTPException(status_code=422, detail=f"could not read project document source(s): {exc}") from exc
     return {"total_rows": estimate.total_rows, "truncated": estimate.truncated, "capped_at": estimate.capped_at}
 
 
