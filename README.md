@@ -40,14 +40,14 @@ Serves on `http://127.0.0.1:8420`. `/api/health` and `/api/version` are public.
 
 ## Credentials
 
-API keys and tokens are stored in the OS credential store only (never SQLite, logs, exports, or a `.env` file). Set them once:
+Create a `.env` file at the repo root (same directory as this README) with:
 
-```bash
-cd backend
-uv run python scripts/set_secrets.py
+```
+GEMINI_API_KEY=...
+HF_TOKEN=...
 ```
 
-Paste the Gemini API key and Hugging Face token when prompted. See `CLAUDE.md` for what each credential unlocks (AI goal suggestion / remote generation vs. Hub model analysis).
+Never commit this file (already gitignored). See `CLAUDE.md` for what each credential unlocks (AI goal suggestion / remote generation vs. Hub model analysis) and for the security trade-off of this approach vs. an OS credential store.
 
 ## Running it as a website (not dev mode)
 
