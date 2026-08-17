@@ -11,8 +11,10 @@ from docling.exceptions import ConversionError, SecurityError
 from docling_core.types.doc.document import DoclingDocument
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".html", ".htm", ".md", ".txt"}
-# ponytail: fixed 200MB ceiling; make configurable if a real document exceeds it.
-MAX_DOCUMENT_BYTES = 200 * 1024 * 1024
+# Shared with tuneforge.api.projects.upload_source, which enforces this same
+# ceiling at upload time (cheaper, via UploadFile.size) — this check here is a
+# second line of defense for anything that reaches disk another way.
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 
 
 class UnsupportedDocumentError(RuntimeError):
@@ -51,8 +53,8 @@ def _validate_before_parsing(path: Path) -> None:
     size = path.stat().st_size
     if size == 0:
         raise EmptyDocumentError(f"{path.name}: file is empty")
-    if size > MAX_DOCUMENT_BYTES:
-        raise OversizedDocumentError(f"{path.name}: {size} bytes exceeds the {MAX_DOCUMENT_BYTES} byte limit")
+    if size > MAX_UPLOAD_BYTES:
+        raise OversizedDocumentError(f"{path.name}: {size} bytes exceeds the {MAX_UPLOAD_BYTES} byte limit")
 
 
 def convert_document(path: Path, *, converter: DocumentConverter | None = None) -> DoclingDocument:

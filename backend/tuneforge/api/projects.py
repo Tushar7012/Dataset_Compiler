@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from tuneforge.api.deps import get_artifact_store, get_session
+from tuneforge.ingestion.documents import MAX_UPLOAD_BYTES
 from tuneforge.ingestion.structured import (
     EmptyStructuredFileError,
     UnsupportedStructuredFormatError,
@@ -56,6 +57,15 @@ async def upload_source(
     session: Session = Depends(get_session),
     artifact_store: ArtifactStore = Depends(get_artifact_store),
 ):
+    # Cheapest possible check first, before any DB query or disk I/O.
+    # UploadFile.size is populated by Starlette's multipart parser before
+    # this function body ever runs — no extra read needed to know it.
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{file.filename}: {file.size} bytes exceeds the {MAX_UPLOAD_BYTES} byte upload limit",
+        )
+
     project_repo = ProjectRepository(session, artifact_store)
     project = project_repo.get(project_id)
     if project is None:

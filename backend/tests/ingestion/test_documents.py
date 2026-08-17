@@ -42,7 +42,7 @@ def test_rejects_empty_file(tmp_path):
 def test_rejects_oversized_file(tmp_path, monkeypatch):
     import tuneforge.ingestion.documents as documents_module
 
-    monkeypatch.setattr(documents_module, "MAX_DOCUMENT_BYTES", 10)
+    monkeypatch.setattr(documents_module, "MAX_UPLOAD_BYTES", 10)
     path = tmp_path / "big.txt"
     path.write_text("this text is definitely more than ten bytes long")
     with pytest.raises(OversizedDocumentError):

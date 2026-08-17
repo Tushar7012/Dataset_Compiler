@@ -60,6 +60,22 @@ def test_upload_source_stores_the_original_filename(client):
     assert "source_hash" in body
 
 
+def test_upload_source_rejects_files_over_the_upload_limit(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("tuneforge.api.projects.MAX_UPLOAD_BYTES", 10)
+    project_id = client.post("/api/projects", json={"name": "proj"}).json()["id"]
+
+    response = client.post(
+        f"/api/projects/{project_id}/sources",
+        files={"file": ("big.csv", b"this content is definitely more than ten bytes", "text/csv")},
+    )
+
+    assert response.status_code == 413
+    assert "byte" in response.json()["detail"]
+    # Rejected before any disk write — nothing landed in this project's storage.
+    session = client.session_factory()
+    assert session.query(Source).count() == 0
+
+
 def test_upload_source_to_unknown_project_returns_404(client):
     import uuid
 
