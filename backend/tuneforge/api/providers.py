@@ -14,7 +14,7 @@ router = APIRouter()
 _VALID_SCOPES = {"local", "remote"}
 _REQUIRED_FIELDS = ("project_id", "name", "base_url", "model", "endpoint_scope")
 
-# Well-known keyring entry for the pre-configured Gemini key (see backend/scripts/set_secrets.py).
+# Well-known credential name for the pre-configured Gemini key (repo-root .env GEMINI_API_KEY).
 # A remote provider created without an explicit api_key falls back to this if it's been seeded,
 # so the key never has to be re-typed into the frontend per project.
 GEMINI_API_KEY_CREDENTIAL_NAME = "gemini"
