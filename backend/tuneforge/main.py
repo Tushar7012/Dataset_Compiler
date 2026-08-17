@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -27,7 +28,7 @@ _redaction_installed = False
 
 
 def _install_global_log_redaction() -> None:
-    """Strip live session tokens from every log record, process-wide.
+    """Strip live session tokens and well-known API secrets from every log record.
 
     A logging.Filter attached to one logger (e.g. "tuneforge") only runs for
     records created through that exact logger — it does not re-run for
@@ -63,6 +64,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.session_token = generate_session_token()
     _redaction_tokens.append(lambda: getattr(app.state, "session_token", None))
+    # Well-known .env credentials — redact whatever is currently in the process
+    # environment (load_dotenv already ran at credentials import time).
+    _redaction_tokens.append(lambda: os.environ.get("GEMINI_API_KEY"))
+    _redaction_tokens.append(lambda: os.environ.get("HF_TOKEN"))
     _install_global_log_redaction()
 
     db_path = settings.data_dir / "tuneforge.db"

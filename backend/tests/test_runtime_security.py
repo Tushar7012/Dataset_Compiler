@@ -114,3 +114,19 @@ def test_session_token_is_redacted_from_any_logger(caplog, tmp_path):
         other_logger.info("session token is %s", token)
     for record in caplog.records:
         assert token not in record.getMessage()
+
+
+def test_env_api_secrets_are_redacted_from_logs(caplog, tmp_path, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret-value-xyz")
+    monkeypatch.setenv("HF_TOKEN", "hf-secret-value-xyz")
+    # Reload redaction tokens need create_app after env is set.
+    make_client(tmp_path)
+    with caplog.at_level(logging.INFO, logger="tuneforge"):
+        logging.getLogger("tuneforge").info(
+            "leaked gemini=%s hf=%s", "gemini-secret-value-xyz", "hf-secret-value-xyz"
+        )
+    for record in caplog.records:
+        msg = record.getMessage()
+        assert "gemini-secret-value-xyz" not in msg
+        assert "hf-secret-value-xyz" not in msg
+        assert "***REDACTED***" in msg
