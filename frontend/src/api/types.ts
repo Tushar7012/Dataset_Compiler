@@ -133,3 +133,9 @@ export interface ConfirmMappingResponse {
   schema_name: string
   total_rows: number
 }
+
+export interface RowEstimateResponse {
+  total_rows: number
+  truncated: boolean
+  capped_at: number
+}

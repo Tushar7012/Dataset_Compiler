@@ -1,5 +1,5 @@
 import { apiFetch } from './client'
-import type { PlanApproval, TrainingIntentInput, TrainingPlanResponse } from './types'
+import type { PlanApproval, RowEstimateResponse, TrainingIntentInput, TrainingPlanResponse } from './types'
 
 export function recommendPlan(
   projectId: string,
@@ -24,4 +24,10 @@ export function recommendPlan(
 
 export function approvePlan(planId: string): Promise<PlanApproval> {
   return apiFetch<PlanApproval>(`/api/plans/${planId}/approve`, { method: 'POST' })
+}
+
+export function estimateRows(projectId: string, modelProfileId: string): Promise<RowEstimateResponse> {
+  return apiFetch<RowEstimateResponse>(
+    `/api/plans/estimated-rows?project_id=${projectId}&model_profile_id=${modelProfileId}`,
+  )
 }

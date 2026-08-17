@@ -4,6 +4,7 @@ import json
 import logging
 import multiprocessing
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -211,6 +212,38 @@ def _load_structured_records(
         records.extend(normalize_rows(rows, schema, document_id=source_row.id))
 
     return records, skipped
+
+
+@dataclass(frozen=True)
+class RowEstimate:
+    total_rows: int  # true combined total across every source, uncapped
+    truncated: bool  # True when total_rows > capped_at
+    capped_at: int  # MAX_ACCEPTED_ROWS, echoed back so callers don't hardcode it
+
+
+def _count_structured_rows(session, artifact_store, project_id: uuid.UUID) -> int:
+    from tuneforge.ingestion.structured import load_structured_rows
+    from tuneforge.storage.repositories import SourceRepository
+
+    source_repo = SourceRepository(session, artifact_store)
+    total = 0
+    for source_row in source_repo.list_sources(project_id):
+        if source_row.confirmed_schema is None:
+            continue
+        total += len(load_structured_rows(source_repo.get_source_path(source_row)))
+    return total
+
+
+def estimate_total_rows(session, artifact_store, project_id: uuid.UUID, tokenizer) -> RowEstimate:
+    """Counts exactly what a real run would process: the same document-chunk
+    list _load_project_sources produces for the worker, plus confirmed
+    structured row counts. No LLM call. Shares _load_project_sources with the
+    real run so the two can never drift apart.
+    """
+    document_chunks = len(_load_project_sources(session, artifact_store, project_id, tokenizer))
+    structured_rows = _count_structured_rows(session, artifact_store, project_id)
+    total = document_chunks + structured_rows
+    return RowEstimate(total_rows=total, truncated=total > MAX_ACCEPTED_ROWS, capped_at=MAX_ACCEPTED_ROWS)
 
 
 def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> None:

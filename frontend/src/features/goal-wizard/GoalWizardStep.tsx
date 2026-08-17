@@ -1,12 +1,14 @@
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { recommendPlan } from '../../api/plans'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { estimateRows, recommendPlan } from '../../api/plans'
 import { ApiError } from '../../api/client'
 import type { TrainingGoal, TrainingPlanResponse } from '../../api/types'
 
 interface GoalWizardStepProps {
   projectId: string
   modelProfileId: string
+  initialGoal?: TrainingGoal
+  initialDesiredBehavior?: string
   onPlanRecommended: (plan: TrainingPlanResponse) => void
 }
 
@@ -17,11 +19,24 @@ function errorDisplay(error: unknown): { message: string; needsProviderSetup: bo
   return { message: 'Something went wrong. Try again.', needsProviderSetup: false }
 }
 
-export function GoalWizardStep({ projectId, modelProfileId, onPlanRecommended }: GoalWizardStepProps) {
-  const [goal, setGoal] = useState<TrainingGoal>('domain_adaptation')
-  const [desiredBehavior, setDesiredBehavior] = useState('')
+export function GoalWizardStep({
+  projectId,
+  modelProfileId,
+  initialGoal,
+  initialDesiredBehavior,
+  onPlanRecommended,
+}: GoalWizardStepProps) {
+  const [goal, setGoal] = useState<TrainingGoal>(initialGoal ?? 'domain_adaptation')
+  const [desiredBehavior, setDesiredBehavior] = useState(initialDesiredBehavior ?? '')
   const [language, setLanguage] = useState('en')
-  const [targetRows, setTargetRows] = useState(200)
+
+  const estimateQuery = useQuery({
+    queryKey: ['estimated-rows', projectId, modelProfileId],
+    queryFn: () => estimateRows(projectId, modelProfileId),
+  })
+  const targetRows = estimateQuery.data
+    ? Math.min(estimateQuery.data.total_rows, estimateQuery.data.capped_at)
+    : undefined
 
   const recommendMutation = useMutation({
     mutationFn: () =>
@@ -29,7 +44,7 @@ export function GoalWizardStep({ projectId, modelProfileId, onPlanRecommended }:
         goal,
         desired_behavior: desiredBehavior,
         language,
-        target_rows: targetRows,
+        target_rows: targetRows as number,
       }),
     onSuccess: (plan) => onPlanRecommended(plan),
   })
@@ -61,15 +76,24 @@ export function GoalWizardStep({ projectId, modelProfileId, onPlanRecommended }:
       <label htmlFor="language">Language</label>
       <input id="language" value={language} onChange={(event) => setLanguage(event.target.value)} />
 
-      <label htmlFor="target-rows">Target rows</label>
-      <input
-        id="target-rows"
-        type="number"
-        value={targetRows}
-        onChange={(event) => setTargetRows(Number(event.target.value))}
-      />
+      {estimateQuery.isError && (
+        <p role="alert">Could not estimate rows — upload a document source first.</p>
+      )}
+      {estimateQuery.data && (
+        <p>
+          This will generate up to <strong>{targetRows}</strong> rows, covering every chunk of your uploaded
+          sources.
+          {estimateQuery.data.truncated && (
+            <>
+              {' '}
+              Your sources contain {estimateQuery.data.total_rows} rows — only the first{' '}
+              {estimateQuery.data.capped_at.toLocaleString('en-US')} will be processed.
+            </>
+          )}
+        </p>
+      )}
 
-      <button type="submit" disabled={recommendMutation.isPending}>
+      <button type="submit" disabled={recommendMutation.isPending || targetRows === undefined}>
         Get recommendation
       </button>
 

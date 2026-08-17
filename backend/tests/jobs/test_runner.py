@@ -593,3 +593,78 @@ def test_load_project_sources_chunks_every_document_source_in_order(tmp_path):
     texts = {s.text for s in sources}
     assert any("First document content" in t for t in texts)
     assert any("Second document content" in t for t in texts)
+
+
+def test_estimate_total_rows_sums_document_chunks_and_structured_rows(tmp_path):
+    from tuneforge.ingestion.chunking import build_tokenizer
+    from tuneforge.jobs.runner import estimate_total_rows
+    from tuneforge.storage.repositories import SourceRepository
+
+    engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
+    session = create_session_factory(engine)()
+    artifact_store = ArtifactStore(tmp_path / "data")
+    project = ProjectRepository(session, artifact_store).create("proj")
+    source_repo = SourceRepository(session, artifact_store)
+
+    doc_path = tmp_path / "a.md"
+    doc_path.write_text("# Doc A\n\nDocument content.\n")
+    source_repo.add_source(project.id, doc_path)
+
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("prompt,completion\nHi,Hello\nBye,Bye now\n")
+    csv_source = source_repo.add_source(project.id, csv_path)
+    csv_source.confirmed_schema = "prompt_completion"
+    session.commit()
+
+    tokenizer = build_tokenizer("gpt2", max_tokens=64)
+    estimate = estimate_total_rows(session, artifact_store, project.id, tokenizer)
+
+    assert estimate.total_rows == 1 + 2  # 1 doc chunk + 2 csv rows
+    assert estimate.truncated is False
+    assert estimate.capped_at == 100_000
+
+
+def test_estimate_total_rows_flags_truncation_over_the_cap(tmp_path, monkeypatch):
+    from tuneforge.ingestion.chunking import build_tokenizer
+    from tuneforge.jobs.runner import estimate_total_rows
+    from tuneforge.storage.repositories import SourceRepository
+
+    monkeypatch.setattr("tuneforge.jobs.runner.MAX_ACCEPTED_ROWS", 1)
+
+    engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
+    session = create_session_factory(engine)()
+    artifact_store = ArtifactStore(tmp_path / "data")
+    project = ProjectRepository(session, artifact_store).create("proj")
+
+    doc_path = tmp_path / "a.md"
+    doc_path.write_text("# Doc A\n\nDocument content.\n")
+    SourceRepository(session, artifact_store).add_source(project.id, doc_path)
+
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("prompt,completion\nHi,Hello\n")
+    csv_source = SourceRepository(session, artifact_store).add_source(project.id, csv_path)
+    csv_source.confirmed_schema = "prompt_completion"
+    session.commit()
+
+    tokenizer = build_tokenizer("gpt2", max_tokens=64)
+    estimate = estimate_total_rows(session, artifact_store, project.id, tokenizer)
+
+    assert estimate.total_rows == 2  # 1 doc chunk + 1 csv row, uncapped
+    assert estimate.truncated is True
+    assert estimate.capped_at == 1
+
+
+def test_estimate_total_rows_with_no_sources_is_zero(tmp_path):
+    from tuneforge.ingestion.chunking import build_tokenizer
+    from tuneforge.jobs.runner import estimate_total_rows
+
+    engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
+    session = create_session_factory(engine)()
+    artifact_store = ArtifactStore(tmp_path / "data")
+    project = ProjectRepository(session, artifact_store).create("proj")
+
+    tokenizer = build_tokenizer("gpt2", max_tokens=64)
+    estimate = estimate_total_rows(session, artifact_store, project.id, tokenizer)
+
+    assert estimate.total_rows == 0
+    assert estimate.truncated is False

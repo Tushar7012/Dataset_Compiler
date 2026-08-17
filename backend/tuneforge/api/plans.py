@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from tuneforge.api.deps import get_session
+from tuneforge.api.deps import get_artifact_store, get_session
 from tuneforge.models.analyzer import ModelProfile
 from tuneforge.planning.intents import TrainingIntent
 from tuneforge.planning.planner import ChatTemplateRequiredError, DistinctJudgeRequiredError, recommend_plan
+from tuneforge.storage.artifacts import ArtifactStore
 from tuneforge.storage.models import ModelProfileRecord, TrainingPlanRecord
 
 router = APIRouter()
@@ -56,6 +57,26 @@ async def recommend(payload: dict, session: Session = Depends(get_session)):
     session.commit()
 
     return {"id": str(record.id), **plan_dict}
+
+
+@router.get("/plans/estimated-rows")
+async def estimated_rows(
+    project_id: uuid.UUID,
+    model_profile_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    artifact_store: ArtifactStore = Depends(get_artifact_store),
+):
+    model_profile_record = session.get(ModelProfileRecord, model_profile_id)
+    if model_profile_record is None:
+        raise HTTPException(status_code=404, detail="model profile not found — analyze a model first")
+    model_profile = ModelProfile.model_validate(model_profile_record.profile_json)
+
+    from tuneforge.ingestion.chunking import build_tokenizer
+    from tuneforge.jobs.runner import estimate_total_rows
+
+    tokenizer = build_tokenizer(model_profile.model_id)
+    estimate = estimate_total_rows(session, artifact_store, project_id, tokenizer)
+    return {"total_rows": estimate.total_rows, "truncated": estimate.truncated, "capped_at": estimate.capped_at}
 
 
 @router.post("/plans/{plan_id}/approve")
