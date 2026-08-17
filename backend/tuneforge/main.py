@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from tuneforge.api import exports, models, plans, projects, providers, runs
+from tuneforge.security.log_redaction import install_log_redaction, register_redaction_token
 from tuneforge.settings import Settings, generate_session_token
 from tuneforge.storage.artifacts import ArtifactStore
 from tuneforge.storage.db import create_session_factory, create_sqlite_engine
@@ -23,52 +24,18 @@ def require_session(request: Request) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid session")
 
 
-_redaction_tokens: list = []
-_redaction_installed = False
-
-
-def _install_global_log_redaction() -> None:
-    """Strip live session tokens and well-known API secrets from every log record.
-
-    A logging.Filter attached to one logger (e.g. "tuneforge") only runs for
-    records created through that exact logger — it does not re-run for
-    ancestors during propagation, and uvicorn's own loggers set
-    propagate=False anyway. Wrapping the record factory instead catches
-    every record regardless of which logger emitted it.
-    """
-    global _redaction_installed
-    if _redaction_installed:
-        return
-    _redaction_installed = True
-    original_factory = logging.getLogRecordFactory()
-
-    def factory(*args, **kwargs):
-        record = original_factory(*args, **kwargs)
-        message = record.getMessage()
-        redacted = message
-        for get_token in _redaction_tokens:
-            token = get_token()
-            if token and token in redacted:
-                redacted = redacted.replace(token, "***REDACTED***")
-        if redacted != message:
-            record.msg = redacted
-            record.args = ()
-        return record
-
-    logging.setLogRecordFactory(factory)
-
-
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     app = FastAPI(title="TuneForge")
     app.state.settings = settings
     app.state.session_token = generate_session_token()
-    _redaction_tokens.append(lambda: getattr(app.state, "session_token", None))
+    register_redaction_token(lambda: getattr(app.state, "session_token", None))
     # Well-known .env credentials — redact whatever is currently in the process
-    # environment (load_dotenv already ran at credentials import time).
-    _redaction_tokens.append(lambda: os.environ.get("GEMINI_API_KEY"))
-    _redaction_tokens.append(lambda: os.environ.get("HF_TOKEN"))
-    _install_global_log_redaction()
+    # environment (load_dotenv already ran at credentials import time), even
+    # before any provider has resolved them via get_api_key.
+    register_redaction_token(lambda: os.environ.get("GEMINI_API_KEY"))
+    register_redaction_token(lambda: os.environ.get("HF_TOKEN"))
+    install_log_redaction()
 
     db_path = settings.data_dir / "tuneforge.db"
     engine = create_sqlite_engine(db_path)

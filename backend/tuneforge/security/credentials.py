@@ -22,6 +22,13 @@ _DOTENV_PATH = Path(__file__).resolve().parents[3] / ".env"
 load_dotenv(_DOTENV_PATH)  # no-op, does not raise, if the file doesn't exist
 
 
+# Every secret value ever returned by get_api_key, regardless of source
+# (.env or keyring) — log_redaction.py strips all of these from every log
+# record. Values only, never provider names, so nothing here identifies
+# which credential leaked.
+_resolved_secrets: set[str] = set()
+
+
 class CredentialNotFoundError(RuntimeError):
     pass
 
@@ -35,12 +42,18 @@ def get_api_key(provider_name: str) -> str:
     if env_var:
         value = os.environ.get(env_var)
         if value:
+            _resolved_secrets.add(value)
             return value
 
     value = keyring.get_password(_SERVICE_NAME, provider_name)
     if value is None:
         raise CredentialNotFoundError(f"no credential stored for provider: {provider_name}")
+    _resolved_secrets.add(value)
     return value
+
+
+def resolved_secrets() -> frozenset[str]:
+    return frozenset(_resolved_secrets)
 
 
 # provider_name is often shared across records (e.g. "gemini", "huggingface" — see

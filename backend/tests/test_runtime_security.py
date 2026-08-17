@@ -130,3 +130,38 @@ def test_env_api_secrets_are_redacted_from_logs(caplog, tmp_path, monkeypatch):
         assert "gemini-secret-value-xyz" not in msg
         assert "hf-secret-value-xyz" not in msg
         assert "***REDACTED***" in msg
+
+
+def test_keyring_sourced_secret_is_redacted_from_logs(tmp_path, caplog, monkeypatch):
+    # A project's own provider credential (ProviderConfigStep) is never in
+    # .env — it only ever lives in keyring, resolved by provider_name (a
+    # random "provider-{uuid}", never "gemini"/"huggingface"). The old
+    # redaction list only knew about the two well-known .env names; this
+    # proves an arbitrary keyring-sourced secret is covered too, once it has
+    # actually been resolved via get_api_key.
+    from tuneforge.security import credentials
+    from tuneforge.security.credentials import get_api_key, store_api_key
+
+    class _FakeKeyring:
+        def __init__(self):
+            self._store: dict[tuple[str, str], str] = {}
+
+        def set_password(self, service, name, value):
+            self._store[(service, name)] = value
+
+        def get_password(self, service, name):
+            return self._store.get((service, name))
+
+    monkeypatch.setattr(credentials, "keyring", _FakeKeyring())
+
+    make_client(tmp_path)  # installs redaction
+    provider_name = "provider-keyring-test"
+    store_api_key(provider_name, "keyring-secret-value-abc")
+    get_api_key(provider_name)  # resolves it into the redaction set
+
+    with caplog.at_level(logging.INFO, logger="tuneforge"):
+        logging.getLogger("tuneforge").info("leaked key=%s", "keyring-secret-value-abc")
+    for record in caplog.records:
+        msg = record.getMessage()
+        assert "keyring-secret-value-abc" not in msg
+        assert "***REDACTED***" in msg

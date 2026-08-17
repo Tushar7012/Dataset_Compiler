@@ -65,3 +65,20 @@ def test_get_api_key_env_var_does_not_affect_unrelated_provider_names(monkeypatc
     monkeypatch.setenv("GEMINI_API_KEY", "from-env")
     credentials.store_api_key("provider-abc123", "arbitrary-provider-key")
     assert credentials.get_api_key("provider-abc123") == "arbitrary-provider-key"
+
+
+def test_resolved_secrets_tracks_keyring_sourced_values():
+    credentials.store_api_key("provider-xyz", "tracked-keyring-secret")
+    credentials.get_api_key("provider-xyz")
+    assert "tracked-keyring-secret" in credentials.resolved_secrets()
+
+
+def test_resolved_secrets_tracks_env_sourced_values(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "tracked-env-secret")
+    credentials.get_api_key("gemini")
+    assert "tracked-env-secret" in credentials.resolved_secrets()
+
+
+def test_resolved_secrets_does_not_include_unresolved_credentials():
+    credentials.store_api_key("provider-never-resolved", "should-not-appear")
+    assert "should-not-appear" not in credentials.resolved_secrets()

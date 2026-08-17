@@ -257,8 +257,17 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
     which is where the actual tested logic lives.
     """
     import asyncio
+    import os
 
     from tuneforge.ingestion.chunking import build_tokenizer
+    from tuneforge.security.log_redaction import install_log_redaction, register_redaction_token
+
+    # This runs in a separate OS process (multiprocessing's "spawn" context
+    # re-imports everything fresh) — the main server process's own redaction
+    # setup (tuneforge.main.create_app) never reaches here.
+    register_redaction_token(lambda: os.environ.get("GEMINI_API_KEY"))
+    register_redaction_token(lambda: os.environ.get("HF_TOKEN"))
+    install_log_redaction()
     from tuneforge.models.analyzer import ModelProfile
     from tuneforge.storage.artifacts import ArtifactStore
     from tuneforge.storage.models import ModelProfileRecord, TrainingPlanRecord
