@@ -1,11 +1,19 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { createProject, uploadSource } from '../../api/projects'
+import { getSourceSchema } from '../../api/structured'
 import { ApiError } from '../../api/client'
+import { ColumnMappingStep } from '../column-mapping/ColumnMappingStep'
 import type { Project, Source } from '../../api/types'
 
 interface ProjectSetupStepProps {
   onProjectReady: (project: Project) => void
+}
+
+type MappingStatus = 'checking' | 'document' | 'awaiting-mapping' | 'mapped'
+
+interface SourceWithStatus extends Source {
+  mappingStatus: MappingStatus
 }
 
 function errorMessage(error: unknown): string {
@@ -16,7 +24,10 @@ function errorMessage(error: unknown): string {
 export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
   const [name, setName] = useState('')
   const [project, setProject] = useState<Project | null>(null)
-  const [sources, setSources] = useState<Source[]>([])
+  const [sources, setSources] = useState<SourceWithStatus[]>([])
+
+  const setSourceStatus = (sourceId: string, mappingStatus: MappingStatus) =>
+    setSources((previous) => previous.map((source) => (source.id === sourceId ? { ...source, mappingStatus } : source)))
 
   const createProjectMutation = useMutation({
     mutationFn: () => createProject(name),
@@ -25,8 +36,15 @@ export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
 
   const uploadMutation = useMutation({
     mutationFn: (file: File) => uploadSource(project!.id, file),
-    onSuccess: (source) => setSources((previous) => [...previous, source]),
+    onSuccess: (source) => {
+      setSources((previous) => [...previous, { ...source, mappingStatus: 'checking' }])
+      getSourceSchema(project!.id, source.id)
+        .then(() => setSourceStatus(source.id, 'awaiting-mapping'))
+        .catch(() => setSourceStatus(source.id, 'document'))
+    },
   })
+
+  const canContinue = sources.length > 0 && sources.every((source) => source.mappingStatus === 'document' || source.mappingStatus === 'mapped')
 
   if (!project) {
     return (
@@ -61,10 +79,20 @@ export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
       {uploadMutation.isError && <p role="alert">{errorMessage(uploadMutation.error)}</p>}
       <ul>
         {sources.map((source) => (
-          <li key={source.id}>{source.filename}</li>
+          <li key={source.id}>
+            {source.filename}
+            {source.mappingStatus === 'checking' && ' — checking format…'}
+            {source.mappingStatus === 'awaiting-mapping' && (
+              <ColumnMappingStep
+                projectId={project.id}
+                sourceId={source.id}
+                onSchemaConfirmed={() => setSourceStatus(source.id, 'mapped')}
+              />
+            )}
+          </li>
         ))}
       </ul>
-      <button type="button" disabled={sources.length === 0} onClick={() => onProjectReady(project)}>
+      <button type="button" disabled={!canContinue} onClick={() => onProjectReady(project)}>
         Continue
       </button>
     </section>

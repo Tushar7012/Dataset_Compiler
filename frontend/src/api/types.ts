@@ -128,3 +128,8 @@ export interface NormalizePreviewResponse {
   preview: Record<string, unknown>[]
   total_rows: number
 }
+
+export interface ConfirmMappingResponse {
+  schema_name: string
+  total_rows: number
+}

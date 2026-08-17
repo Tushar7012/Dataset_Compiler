@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getSourceSchema, normalizePreview } from '../../api/structured'
+import { confirmMapping, getSourceSchema, normalizePreview } from '../../api/structured'
 import { ApiError } from '../../api/client'
 import type { NormalizePreviewResponse, SchemaDetection } from '../../api/types'
 
@@ -21,6 +21,8 @@ export function ColumnMappingStep({ projectId, sourceId, onSchemaConfirmed }: Co
   const [preview, setPreview] = useState<NormalizePreviewResponse | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [isLoadingPreview, setIsLoadingPreview] = useState(false)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
+  const [isConfirming, setIsConfirming] = useState(false)
 
   useEffect(() => {
     getSourceSchema(projectId, sourceId)
@@ -28,14 +30,24 @@ export function ColumnMappingStep({ projectId, sourceId, onSchemaConfirmed }: Co
       .catch((error: unknown) => setDetectError(errorMessage(error)))
   }, [projectId, sourceId])
 
+  const mappingToSend = detected?.schema_name ? undefined : mapping
+
   const loadPreview = () => {
     setPreviewError(null)
     setIsLoadingPreview(true)
-    const mappingToSend = detected?.schema_name ? undefined : mapping
     normalizePreview(projectId, sourceId, mappingToSend)
       .then(setPreview)
       .catch((error: unknown) => setPreviewError(errorMessage(error)))
       .finally(() => setIsLoadingPreview(false))
+  }
+
+  const confirm = () => {
+    setConfirmError(null)
+    setIsConfirming(true)
+    confirmMapping(projectId, sourceId, mappingToSend)
+      .then((response) => onSchemaConfirmed(response.schema_name))
+      .catch((error: unknown) => setConfirmError(errorMessage(error)))
+      .finally(() => setIsConfirming(false))
   }
 
   if (!detected) {
@@ -81,9 +93,10 @@ export function ColumnMappingStep({ projectId, sourceId, onSchemaConfirmed }: Co
               </li>
             ))}
           </ol>
-          <button type="button" onClick={() => onSchemaConfirmed(preview.schema_name)}>
+          <button type="button" disabled={isConfirming} onClick={confirm}>
             Confirm
           </button>
+          {confirmError && <p role="alert">{confirmError}</p>}
         </>
       )}
     </section>
