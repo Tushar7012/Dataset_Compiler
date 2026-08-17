@@ -46,6 +46,9 @@ class OpenAICompatibleProvider:
     def _url(self, path: str) -> str:
         return f"{self.profile.base_url.rstrip('/')}/{path}"
 
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
     async def health(self) -> ProviderHealth:
         request_id = uuid.uuid4().hex
         logger.info("provider health check request_id=%s provider=%s", request_id, self.profile.name)
@@ -113,4 +116,6 @@ class OpenAICompatibleProvider:
                 content = data["choices"][0]["message"]["content"]
             except (KeyError, IndexError) as exc:
                 raise ProviderResponseError(f"request_id={request_id}: malformed response") from exc
+            if content is None:
+                raise ProviderResponseError(f"request_id={request_id}: provider returned null content")
             return GenerationResponse(content=content, raw=data)

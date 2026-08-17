@@ -91,6 +91,21 @@ async def test_generate_does_not_retry_auth_errors():
     assert calls["count"] == 1
 
 
+async def test_aclose_closes_the_underlying_http_client():
+    provider = make_provider(lambda request: httpx.Response(200))
+    await provider.aclose()
+    assert provider._client.is_closed is True
+
+
+async def test_generate_raises_provider_response_error_on_null_content():
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": None}}]})
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderResponseError):
+        await provider.generate(GenerationRequest(messages=[{"role": "user", "content": "hi"}]))
+
+
 async def test_remote_provider_refuses_generation_without_consent():
     def handler(request):
         raise AssertionError("should not reach the network without consent")

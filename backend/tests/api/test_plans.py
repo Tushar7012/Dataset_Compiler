@@ -177,6 +177,26 @@ def test_suggest_goal_returns_422_when_no_document_source_uploaded(client):
     assert "document source" in response.json()["detail"]
 
 
+def test_suggest_goal_returns_422_when_document_has_no_extractable_text(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("tuneforge.providers.openai_compatible.get_api_key", lambda ref: "fake-key")
+    project_id = _project_id(client)
+    _upload_doc_source(client, project_id, tmp_path)
+
+    class _EmptyDoc:
+        def export_to_markdown(self):
+            return "   "  # e.g. an image-only PDF Docling parsed but couldn't extract text from (do_ocr=False)
+
+    monkeypatch.setattr(
+        "tuneforge.ingestion.documents.convert_document_cached", lambda path, cache_dir: (_EmptyDoc(), "hash")
+    )
+
+    response = client.post(
+        "/api/plans/suggest-goal", json={"project_id": str(project_id), "remote_consent": True}
+    )
+    assert response.status_code == 422
+    assert "extractable text" in response.json()["detail"]
+
+
 def test_suggest_goal_returns_422_when_gemini_credential_missing(client, monkeypatch, tmp_path):
     from tuneforge.security.credentials import CredentialNotFoundError
 
@@ -217,6 +237,33 @@ def test_suggest_goal_returns_the_parsed_suggestion_on_success(client, monkeypat
     body = response.json()
     assert body["goal"] == "domain_adaptation"
     assert body["desired_behavior"] == "Answer questions about HR policy accurately."
+
+
+def test_suggest_goal_closes_the_gemini_http_client_after_use(client, monkeypatch, tmp_path):
+    import httpx
+
+    monkeypatch.setattr("tuneforge.providers.openai_compatible.get_api_key", lambda ref: "fake-key")
+    project_id = _project_id(client)
+    _upload_doc_source(client, project_id, tmp_path)
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({
+            "goal": "domain_adaptation", "rationale": "x", "desired_behavior": "y",
+        })}}]})
+
+    created = {}
+
+    def _make_provider():
+        provider = _gemini_test_provider(handler)
+        created["provider"] = provider
+        return provider
+
+    monkeypatch.setattr("tuneforge.api.plans._gemini_provider", _make_provider)
+
+    response = client.post("/api/plans/suggest-goal", json={"project_id": str(project_id), "remote_consent": True})
+
+    assert response.status_code == 200
+    assert created["provider"]._client.is_closed is True
 
 
 def test_suggest_goal_returns_502_when_gemini_suggests_an_invalid_goal(client, monkeypatch, tmp_path):

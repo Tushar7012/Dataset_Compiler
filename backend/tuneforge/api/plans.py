@@ -52,6 +52,8 @@ def _sample_project_text(session, artifact_store, project_id: uuid.UUID) -> str:
             continue
         document, _ = convert_document_cached(source_repo.get_source_path(source_row), cache_dir=cache_dir)
         text = document.export_to_markdown()[:budget]
+        if not text.strip():
+            continue  # e.g. an image-only PDF Docling parsed but extracted no text from (do_ocr=False)
         chunks.append(text)
         budget -= len(text)
     return "\n\n---\n\n".join(chunks)
@@ -189,7 +191,8 @@ async def suggest_goal(
 
     if not text_sample:
         raise HTTPException(
-            status_code=422, detail="no document source available to sample — upload a document source first"
+            status_code=422,
+            detail="no document source with extractable text available — upload a document source first"
         )
 
     consent = RunConsent(run_id=uuid.uuid4(), granted_at=datetime.now(timezone.utc))
@@ -200,6 +203,11 @@ async def suggest_goal(
         raise HTTPException(status_code=422, detail=f"Gemini credential not configured: {exc}") from exc
     except (ProviderAuthError, ProviderResponseError, GoalSuggestionError) as exc:
         raise HTTPException(status_code=502, detail=f"goal suggestion failed: {exc}") from exc
+    finally:
+        # Unlike runner.py's providers (built in a short-lived subprocess that
+        # exits right after), this one is built fresh per request inside the
+        # long-lived main server process — never leave its client open.
+        await provider.aclose()
 
 
 @router.post("/plans/{plan_id}/approve")

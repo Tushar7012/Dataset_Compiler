@@ -79,7 +79,10 @@ export function GoalWizardStep({
       {estimateQuery.isError && (
         <p role="alert">Could not estimate rows — upload a document source first.</p>
       )}
-      {estimateQuery.data && (
+      {estimateQuery.data && estimateQuery.data.total_rows === 0 && (
+        <p role="alert">No rows to generate yet — upload a document source first.</p>
+      )}
+      {estimateQuery.data && estimateQuery.data.total_rows > 0 && (
         <p>
           This will generate up to <strong>{targetRows}</strong> rows, covering every chunk of your uploaded
           sources.
@@ -93,7 +96,7 @@ export function GoalWizardStep({
         </p>
       )}
 
-      <button type="submit" disabled={recommendMutation.isPending || targetRows === undefined}>
+      <button type="submit" disabled={recommendMutation.isPending || !targetRows}>
         Get recommendation
       </button>
 

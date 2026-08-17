@@ -52,6 +52,14 @@ describe('GoalWizardStep', () => {
     expect(await screen.findByText(/only the first 100,000/i)).toBeInTheDocument()
   })
 
+  it('disables submit and explains why when the estimate is zero rows', async () => {
+    mockEstimateRows.mockResolvedValue({ total_rows: 0, truncated: false, capped_at: 100_000 })
+    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />)
+
+    expect(await screen.findByText(/upload a document source/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /get recommendation/i })).toBeDisabled()
+  })
+
   it('disables submit until the row estimate has loaded', () => {
     mockEstimateRows.mockReturnValue(new Promise(() => {}))
     renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />)

@@ -57,9 +57,13 @@ async def upload_source(
     session: Session = Depends(get_session),
     artifact_store: ArtifactStore = Depends(get_artifact_store),
 ):
-    # Cheapest possible check first, before any DB query or disk I/O.
-    # UploadFile.size is populated by Starlette's multipart parser before
-    # this function body ever runs — no extra read needed to know it.
+    # Cheapest possible check first, before any DB query or persisting into
+    # project storage. UploadFile.size is already populated by Starlette's
+    # multipart parser by the time this function body runs — no extra read
+    # needed. Note this doesn't prevent the oversized body from being
+    # received/spooled over the network in the first place (that's ASGI/
+    # web-server territory, not this handler's) — it only stops it from
+    # being written into a project permanently.
     if file.size is not None and file.size > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,

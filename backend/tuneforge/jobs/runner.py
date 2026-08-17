@@ -235,10 +235,15 @@ def _count_structured_rows(session, artifact_store, project_id: uuid.UUID) -> in
 
 
 def estimate_total_rows(session, artifact_store, project_id: uuid.UUID, tokenizer) -> RowEstimate:
-    """Counts exactly what a real run would process: the same document-chunk
-    list _load_project_sources produces for the worker, plus confirmed
-    structured row counts. No LLM call. Shares _load_project_sources with the
-    real run so the two can never drift apart.
+    """Counts document chunks the same way _load_project_sources does for the
+    real run (so the two can never drift apart there), plus every confirmed
+    structured source's row count. No LLM call.
+
+    This runs before a plan/objective exists, so unlike the real run's
+    _load_structured_records it cannot yet filter structured sources by
+    canonical-schema compatibility — a project mixing structured sources of
+    different training shapes will see a higher estimate here than what a
+    given plan's run actually accepts.
     """
     document_chunks = len(_load_project_sources(session, artifact_store, project_id, tokenizer))
     structured_rows = _count_structured_rows(session, artifact_store, project_id)
