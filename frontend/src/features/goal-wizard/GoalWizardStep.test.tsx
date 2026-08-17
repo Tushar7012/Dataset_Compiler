@@ -55,6 +55,13 @@ describe('GoalWizardStep', () => {
     expect(results).toHaveNoViolations()
   }, 10_000)
 
+  it('moves focus to the step heading on mount', () => {
+    renderWithProviders(
+      <GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />,
+    )
+    expect(screen.getByRole('heading', { name: /^training goal$/i })).toHaveFocus()
+  })
+
   it('shows a truncation warning when the estimate exceeds the accepted-row cap', async () => {
     mockEstimateRows.mockResolvedValue({ total_rows: 150_000, truncated: true, capped_at: 100_000 })
     renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />)

@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import { createProject, uploadSource } from '../../api/projects'
 import { getSourceSchema } from '../../api/structured'
 import { ApiError } from '../../api/client'
+import { useFocusOnMount } from '../../useFocusOnMount'
 import { ColumnMappingStep } from '../column-mapping/ColumnMappingStep'
 import type { Project, Source } from '../../api/types'
 
@@ -20,6 +21,116 @@ interface SourceWithStatus extends Source {
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message
   return 'Something went wrong. Try again.'
+}
+
+function CreateProjectForm({
+  name,
+  setName,
+  onSubmit,
+  isPending,
+  error,
+}: {
+  name: string
+  setName: (value: string) => void
+  onSubmit: () => void
+  isPending: boolean
+  error: unknown
+}) {
+  const headingRef = useFocusOnMount<HTMLHeadingElement>()
+  return (
+    <section className="wizard-step">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          onSubmit()
+        }}
+      >
+        <h2 ref={headingRef} tabIndex={-1}>
+          Project setup
+        </h2>
+        <div className="field">
+          <label htmlFor="project-name">Project name</label>
+          <input id="project-name" value={name} onChange={(event) => setName(event.target.value)} />
+        </div>
+        <div className="button-row">
+          <button type="submit" disabled={isPending}>
+            Create project
+          </button>
+        </div>
+        {error != null && <p role="alert">{errorMessage(error)}</p>}
+      </form>
+    </section>
+  )
+}
+
+function UploadSourcesPanel({
+  project,
+  sources,
+  canContinue,
+  onUpload,
+  onContinue,
+  onProbe,
+  onMapped,
+  uploadError,
+}: {
+  project: Project
+  sources: SourceWithStatus[]
+  canContinue: boolean
+  onUpload: (file: File) => void
+  onContinue: () => void
+  onProbe: (sourceId: string) => void
+  onMapped: (sourceId: string) => void
+  uploadError: unknown
+}) {
+  const headingRef = useFocusOnMount<HTMLHeadingElement>()
+  return (
+    <section className="wizard-step">
+      <h2 ref={headingRef} tabIndex={-1}>
+        Upload sources
+      </h2>
+      <p>{project.name}</p>
+      <div className="field">
+        <label htmlFor="source-upload">Upload a source document</label>
+        <input
+          id="source-upload"
+          type="file"
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (file) onUpload(file)
+          }}
+        />
+      </div>
+      {uploadError != null && <p role="alert">{errorMessage(uploadError)}</p>}
+      <ul>
+        {sources.map((source) => (
+          <li key={source.id}>
+            {source.filename}
+            {source.mappingStatus === 'checking' && ' — checking format…'}
+            {source.mappingStatus === 'awaiting-mapping' && (
+              <ColumnMappingStep
+                projectId={project.id}
+                sourceId={source.id}
+                onSchemaConfirmed={() => onMapped(source.id)}
+              />
+            )}
+            {source.mappingStatus === 'probe-failed' && (
+              <>
+                <p role="alert">{source.probeError}</p>
+                <button type="button" onClick={() => onProbe(source.id)}>
+                  Retry
+                </button>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="button-row">
+        <button type="button" disabled={!canContinue} onClick={onContinue}>
+          Continue
+        </button>
+      </div>
+    </section>
+  )
 }
 
 export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
@@ -63,65 +174,32 @@ export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
     },
   })
 
-  const canContinue = sources.length > 0 && sources.every((source) => source.mappingStatus === 'document' || source.mappingStatus === 'mapped')
+  const canContinue =
+    sources.length > 0 &&
+    sources.every((source) => source.mappingStatus === 'document' || source.mappingStatus === 'mapped')
 
   if (!project) {
     return (
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          createProjectMutation.mutate()
-        }}
-      >
-        <label htmlFor="project-name">Project name</label>
-        <input id="project-name" value={name} onChange={(event) => setName(event.target.value)} />
-        <button type="submit" disabled={createProjectMutation.isPending}>
-          Create project
-        </button>
-        {createProjectMutation.isError && <p role="alert">{errorMessage(createProjectMutation.error)}</p>}
-      </form>
+      <CreateProjectForm
+        name={name}
+        setName={setName}
+        onSubmit={() => createProjectMutation.mutate()}
+        isPending={createProjectMutation.isPending}
+        error={createProjectMutation.isError ? createProjectMutation.error : null}
+      />
     )
   }
 
   return (
-    <section>
-      <h2>{project.name}</h2>
-      <label htmlFor="source-upload">Upload a source document</label>
-      <input
-        id="source-upload"
-        type="file"
-        onChange={(event) => {
-          const file = event.target.files?.[0]
-          if (file) uploadMutation.mutate(file)
-        }}
-      />
-      {uploadMutation.isError && <p role="alert">{errorMessage(uploadMutation.error)}</p>}
-      <ul>
-        {sources.map((source) => (
-          <li key={source.id}>
-            {source.filename}
-            {source.mappingStatus === 'checking' && ' — checking format…'}
-            {source.mappingStatus === 'awaiting-mapping' && (
-              <ColumnMappingStep
-                projectId={project.id}
-                sourceId={source.id}
-                onSchemaConfirmed={() => setSourceStatus(source.id, 'mapped')}
-              />
-            )}
-            {source.mappingStatus === 'probe-failed' && (
-              <>
-                <p role="alert">{source.probeError}</p>
-                <button type="button" onClick={() => probeSchema(source.id)}>
-                  Retry
-                </button>
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
-      <button type="button" disabled={!canContinue} onClick={() => onProjectReady(project)}>
-        Continue
-      </button>
-    </section>
+    <UploadSourcesPanel
+      project={project}
+      sources={sources}
+      canContinue={canContinue}
+      onUpload={(file) => uploadMutation.mutate(file)}
+      onContinue={() => onProjectReady(project)}
+      onProbe={probeSchema}
+      onMapped={(sourceId) => setSourceStatus(sourceId, 'mapped')}
+      uploadError={uploadMutation.isError ? uploadMutation.error : null}
+    />
   )
 }

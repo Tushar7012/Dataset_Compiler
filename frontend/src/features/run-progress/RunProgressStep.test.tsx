@@ -45,6 +45,14 @@ describe('RunProgressStep', () => {
     expect(results).toHaveNoViolations()
   }, 10_000)
 
+  it('moves focus to the step heading on mount', async () => {
+    mockSubscribe.mockImplementation(async (runId, onEvent) => {
+      onEvent({ run_id: runId, sequence: 0, stage: 'running', completed_rows: 40, total_rows: 100 })
+    })
+    renderWithProviders(<RunProgressStep runId="run-1" onCompleted={vi.fn()} />)
+    expect(screen.getByRole('heading', { name: /run progress/i })).toHaveFocus()
+  })
+
   it('cancels the run when Cancel is clicked', async () => {
     const user = userEvent.setup()
     mockCancelRun.mockResolvedValue({ status: 'cancel_requested' })

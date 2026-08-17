@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { approveFull, createPreview, listRunRecords } from '../../api/runs'
 import { subscribeToRunEvents } from '../../api/runEvents'
 import { ApiError } from '../../api/client'
+import { useFocusOnMount } from '../../useFocusOnMount'
 import type { RunCreated, RunRecordsResponse, RunStatus } from '../../api/types'
 
 interface PreviewStepProps {
@@ -15,6 +16,87 @@ interface PreviewStepProps {
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message
   return 'Something went wrong. Try again.'
+}
+
+function PreviewIdle({
+  isCreating,
+  createError,
+  onStart,
+}: {
+  isCreating: boolean
+  createError: string | null
+  onStart: () => void
+}) {
+  const headingRef = useFocusOnMount<HTMLHeadingElement>()
+  return (
+    <section className="wizard-step">
+      <h2 ref={headingRef} tabIndex={-1}>
+        Preview
+      </h2>
+      <div className="button-row">
+        <button type="button" disabled={isCreating} onClick={onStart}>
+          Generate preview
+        </button>
+      </div>
+      {createError && <p role="alert">{createError}</p>}
+    </section>
+  )
+}
+
+function PreviewRunning({
+  stage,
+  status,
+  progress,
+  records,
+  isApproving,
+  approveError,
+  onApprove,
+}: {
+  stage: RunStatus | null
+  status: RunStatus
+  progress: { completed: number; total: number }
+  records: RunRecordsResponse | null
+  isApproving: boolean
+  approveError: string | null
+  onApprove: () => void
+}) {
+  const headingRef = useFocusOnMount<HTMLHeadingElement>()
+  return (
+    <section className="wizard-step">
+      <h2 ref={headingRef} tabIndex={-1}>
+        Preview
+      </h2>
+      <div className="card">
+        <p>
+          Preview status: <strong>{stage ?? status}</strong> ({progress.completed}/{progress.total} rows)
+        </p>
+
+        {records && (
+          <>
+            <p>
+              {records.total_accepted} row(s) accepted, schema: {records.canonical_schema}
+            </p>
+            <ol>
+              {records.records.map((record, index) => (
+                <li key={index}>
+                  <pre>{JSON.stringify(record, null, 2)}</pre>
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+      </div>
+
+      {stage === 'completed' && (
+        <div className="button-row">
+          <button type="button" disabled={isApproving} onClick={onApprove}>
+            Approve full run
+          </button>
+        </div>
+      )}
+      {approveError && <p role="alert">{approveError}</p>}
+    </section>
+  )
 }
 
 export function PreviewStep({
@@ -73,43 +155,18 @@ export function PreviewStep({
   }
 
   if (!run) {
-    return (
-      <section>
-        <button type="button" disabled={isCreating} onClick={startPreview}>
-          Generate preview
-        </button>
-        {createError && <p role="alert">{createError}</p>}
-      </section>
-    )
+    return <PreviewIdle isCreating={isCreating} createError={createError} onStart={startPreview} />
   }
 
   return (
-    <section>
-      <p>
-        Preview status: <strong>{stage ?? run.status}</strong> ({progress.completed}/{progress.total} rows)
-      </p>
-
-      {records && (
-        <>
-          <p>
-            {records.total_accepted} row(s) accepted, schema: {records.canonical_schema}
-          </p>
-          <ol>
-            {records.records.map((record, index) => (
-              <li key={index}>
-                <pre>{JSON.stringify(record, null, 2)}</pre>
-              </li>
-            ))}
-          </ol>
-        </>
-      )}
-
-      {stage === 'completed' && (
-        <button type="button" disabled={isApproving} onClick={approve}>
-          Approve full run
-        </button>
-      )}
-      {approveError && <p role="alert">{approveError}</p>}
-    </section>
+    <PreviewRunning
+      stage={stage}
+      status={run.status}
+      progress={progress}
+      records={records}
+      isApproving={isApproving}
+      approveError={approveError}
+      onApprove={approve}
+    />
   )
 }

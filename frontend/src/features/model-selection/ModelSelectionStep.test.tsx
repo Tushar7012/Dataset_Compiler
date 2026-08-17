@@ -49,6 +49,11 @@ describe('ModelSelectionStep', () => {
     expect(results).toHaveNoViolations()
   }, 10_000)
 
+  it('moves focus to the step heading on mount', () => {
+    renderWithProviders(<ModelSelectionStep projectId="proj-1" onProfileReady={vi.fn()} />)
+    expect(screen.getByRole('heading', { name: /model selection/i })).toHaveFocus()
+  })
+
   it('analyzes the model and displays its evidence', async () => {
     const user = userEvent.setup()
     mockAnalyzeModel.mockResolvedValue(profile)

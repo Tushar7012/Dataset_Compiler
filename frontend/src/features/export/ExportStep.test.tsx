@@ -36,6 +36,11 @@ describe('ExportStep', () => {
     expect(results).toHaveNoViolations()
   }, 10_000)
 
+  it('moves focus to the step heading on mount', () => {
+    renderWithProviders(<ExportStep runId="run-1" />)
+    expect(screen.getByRole('heading', { name: /export dataset/i })).toHaveFocus()
+  })
+
   it('exports then downloads the bundle on click', async () => {
     const user = userEvent.setup()
     mockExportRun.mockResolvedValue({ run_id: 'run-1', export_dir: '/data/x' })

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { estimateRows, recommendPlan } from '../../api/plans'
 import { ApiError } from '../../api/client'
+import { useFocusOnMount } from '../../useFocusOnMount'
 import type { TrainingGoal, TrainingPlanResponse } from '../../api/types'
 
 interface GoalWizardStepProps {
@@ -26,6 +27,7 @@ export function GoalWizardStep({
   initialDesiredBehavior,
   onPlanRecommended,
 }: GoalWizardStepProps) {
+  const headingRef = useFocusOnMount<HTMLHeadingElement>()
   const [goal, setGoal] = useState<TrainingGoal>(initialGoal ?? 'domain_adaptation')
   const [desiredBehavior, setDesiredBehavior] = useState(initialDesiredBehavior ?? '')
   const [language, setLanguage] = useState('en')
@@ -52,60 +54,73 @@ export function GoalWizardStep({
   const error = recommendMutation.isError ? errorDisplay(recommendMutation.error) : null
 
   return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault()
-        recommendMutation.mutate()
-      }}
-    >
-      <label htmlFor="goal">Training goal</label>
-      <select id="goal" value={goal} onChange={(event) => setGoal(event.target.value as TrainingGoal)}>
-        <option value="domain_adaptation">Domain adaptation</option>
-        <option value="single_turn_instruction">Single-turn instruction</option>
-        <option value="multi_turn_conversation">Multi-turn conversation</option>
-        <option value="preference_alignment">Preference alignment</option>
-      </select>
+    <section className="wizard-step">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          recommendMutation.mutate()
+        }}
+      >
+        <h2 ref={headingRef} tabIndex={-1}>
+          Training goal
+        </h2>
+        <div className="field">
+          <label htmlFor="goal">Training goal</label>
+          <select id="goal" value={goal} onChange={(event) => setGoal(event.target.value as TrainingGoal)}>
+            <option value="domain_adaptation">Domain adaptation</option>
+            <option value="single_turn_instruction">Single-turn instruction</option>
+            <option value="multi_turn_conversation">Multi-turn conversation</option>
+            <option value="preference_alignment">Preference alignment</option>
+          </select>
+        </div>
 
-      <label htmlFor="desired-behavior">Desired behavior</label>
-      <textarea
-        id="desired-behavior"
-        value={desiredBehavior}
-        onChange={(event) => setDesiredBehavior(event.target.value)}
-      />
+        <div className="field">
+          <label htmlFor="desired-behavior">Desired behavior</label>
+          <textarea
+            id="desired-behavior"
+            value={desiredBehavior}
+            onChange={(event) => setDesiredBehavior(event.target.value)}
+          />
+        </div>
 
-      <label htmlFor="language">Language</label>
-      <input id="language" value={language} onChange={(event) => setLanguage(event.target.value)} />
+        <div className="field">
+          <label htmlFor="language">Language</label>
+          <input id="language" value={language} onChange={(event) => setLanguage(event.target.value)} />
+        </div>
 
-      {estimateQuery.isError && (
-        <p role="alert">Could not estimate rows — upload a document source first.</p>
-      )}
-      {estimateQuery.data && estimateQuery.data.total_rows === 0 && (
-        <p role="alert">No rows to generate yet — upload a document source first.</p>
-      )}
-      {estimateQuery.data && estimateQuery.data.total_rows > 0 && (
-        <p>
-          This will generate up to <strong>{targetRows}</strong> rows, covering every chunk of your uploaded
-          sources.
-          {estimateQuery.data.truncated && (
-            <>
-              {' '}
-              Your sources contain {estimateQuery.data.total_rows} rows — only the first{' '}
-              {estimateQuery.data.capped_at.toLocaleString('en-US')} will be processed.
-            </>
-          )}
-        </p>
-      )}
+        {estimateQuery.isError && (
+          <p role="alert">Could not estimate rows — upload a document source first.</p>
+        )}
+        {estimateQuery.data && estimateQuery.data.total_rows === 0 && (
+          <p role="alert">No rows to generate yet — upload a document source first.</p>
+        )}
+        {estimateQuery.data && estimateQuery.data.total_rows > 0 && (
+          <p>
+            This will generate up to <strong>{targetRows}</strong> rows, covering every chunk of your uploaded
+            sources.
+            {estimateQuery.data.truncated && (
+              <>
+                {' '}
+                Your sources contain {estimateQuery.data.total_rows} rows — only the first{' '}
+                {estimateQuery.data.capped_at.toLocaleString('en-US')} will be processed.
+              </>
+            )}
+          </p>
+        )}
 
-      <button type="submit" disabled={recommendMutation.isPending || !targetRows}>
-        Get recommendation
-      </button>
+        <div className="button-row">
+          <button type="submit" disabled={recommendMutation.isPending || !targetRows}>
+            Get recommendation
+          </button>
+        </div>
 
-      {error && (
-        <p role="alert">
-          {error.message}
-          {error.needsProviderSetup && ' — finish provider setup, then try again.'}
-        </p>
-      )}
-    </form>
+        {error && (
+          <p role="alert">
+            {error.message}
+            {error.needsProviderSetup && ' — finish provider setup, then try again.'}
+          </p>
+        )}
+      </form>
+    </section>
   )
 }

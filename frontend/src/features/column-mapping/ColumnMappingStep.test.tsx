@@ -51,6 +51,27 @@ describe('ColumnMappingStep', () => {
     expect(results).toHaveNoViolations()
   }, 10_000)
 
+  it('moves focus to the detecting heading while schema detection is pending', () => {
+    mockGetSourceSchema.mockReturnValue(new Promise(() => {}))
+    renderWithProviders(
+      <ColumnMappingStep projectId="proj-1" sourceId="src-1" onSchemaConfirmed={vi.fn()} />,
+    )
+    expect(screen.getByRole('heading', { name: /detecting format/i })).toHaveFocus()
+  })
+
+  it('moves focus to the mapping heading once detection completes', async () => {
+    mockGetSourceSchema.mockResolvedValue({
+      schema_name: 'prompt_completion',
+      confidence: 1.0,
+      matched_keys: ['prompt', 'completion'],
+      columns: ['prompt', 'completion'],
+    })
+    renderWithProviders(
+      <ColumnMappingStep projectId="proj-1" sourceId="src-1" onSchemaConfirmed={vi.fn()} />,
+    )
+    expect(await screen.findByRole('heading', { name: /column mapping/i })).toHaveFocus()
+  })
+
   it('shows a mapping input per column when detection is inconclusive', async () => {
     mockGetSourceSchema.mockResolvedValue({
       schema_name: null,

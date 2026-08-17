@@ -50,6 +50,18 @@ describe('PreviewStep', () => {
     expect(results).toHaveNoViolations()
   }, 10_000)
 
+  it('moves focus to the step heading on mount', () => {
+    renderWithProviders(
+      <PreviewStep
+        planId="plan-1"
+        generatorProfileId="prov-1"
+        remoteConsentGranted={false}
+        onApprovedFull={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('heading', { name: /^preview$/i })).toHaveFocus()
+  })
+
   it('creates the preview, streams progress, and shows accepted rows on completion', async () => {
     const user = userEvent.setup()
     mockCreatePreview.mockResolvedValue({ id: 'run-1', status: 'pending', is_preview: true })

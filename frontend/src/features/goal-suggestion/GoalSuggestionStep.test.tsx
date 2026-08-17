@@ -41,6 +41,11 @@ describe('GoalSuggestionStep', () => {
     expect(results).toHaveNoViolations()
   }, 10_000)
 
+  it('moves focus to the step heading on mount', () => {
+    renderWithProviders(<GoalSuggestionStep projectId="proj-1" onDecision={vi.fn()} />)
+    expect(screen.getByRole('heading', { name: /suggested training goal/i })).toHaveFocus()
+  })
+
   it('calls suggestGoal once consent is checked and the button is clicked', async () => {
     const user = userEvent.setup()
     mockSuggestGoal.mockResolvedValue(suggestion)

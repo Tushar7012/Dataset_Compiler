@@ -44,6 +44,11 @@ describe('PlanConfirmationStep', () => {
     expect(results).toHaveNoViolations()
   }, 10_000)
 
+  it('moves focus to the step heading on mount', () => {
+    renderWithProviders(<PlanConfirmationStep plan={plan} onApproved={vi.fn()} />)
+    expect(screen.getByRole('heading', { name: /confirm training plan/i })).toHaveFocus()
+  })
+
   it('approves the plan and calls onApproved', async () => {
     const user = userEvent.setup()
     mockApprovePlan.mockResolvedValue({ id: 'plan-1', approved_at: '2026-08-15T00:00:00Z' })

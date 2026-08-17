@@ -50,6 +50,22 @@ describe('ProjectSetupStep', () => {
     expect(results).toHaveNoViolations()
   }, 10_000)
 
+  it('moves focus to the step heading on mount', () => {
+    renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
+    expect(screen.getByRole('heading', { name: /project setup/i })).toHaveFocus()
+  })
+
+  it('moves focus to the upload heading after the project is created', async () => {
+    const user = userEvent.setup()
+    mockCreateProject.mockResolvedValue({ id: 'proj-1', name: 'HR Policy Bot', created_at: '2026-08-15T00:00:00Z' })
+    renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
+
+    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
+    await user.click(screen.getByRole('button', { name: /create project/i }))
+
+    expect(await screen.findByRole('heading', { name: /upload sources/i })).toHaveFocus()
+  })
+
   it('creates the project and reveals the upload form', async () => {
     const user = userEvent.setup()
     mockCreateProject.mockResolvedValue({ id: 'proj-1', name: 'HR Policy Bot', created_at: '2026-08-15T00:00:00Z' })

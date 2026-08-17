@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { cancelRun, resumeRun } from '../../api/runs'
 import { subscribeToRunEvents } from '../../api/runEvents'
 import { ApiError } from '../../api/client'
+import { useFocusOnMount } from '../../useFocusOnMount'
 import type { RunStatus } from '../../api/types'
 
 interface RunProgressStepProps {
@@ -15,6 +16,7 @@ function errorMessage(error: unknown): string {
 }
 
 export function RunProgressStep({ runId, onCompleted }: RunProgressStepProps) {
+  const headingRef = useFocusOnMount<HTMLHeadingElement>()
   const [stage, setStage] = useState<RunStatus | null>(null)
   const [progress, setProgress] = useState({ completed: 0, total: 0 })
   const [actionError, setActionError] = useState<string | null>(null)
@@ -62,21 +64,28 @@ export function RunProgressStep({ runId, onCompleted }: RunProgressStepProps) {
   const canResume = stage === 'cancelled' || stage === 'failed'
 
   return (
-    <section>
-      <p>
-        Run status: <strong>{stage ?? 'pending'}</strong> ({progress.completed}/{progress.total} rows)
-      </p>
+    <section className="wizard-step">
+      <h2 ref={headingRef} tabIndex={-1}>
+        Run progress
+      </h2>
+      <div className="card">
+        <p>
+          Run status: <strong>{stage ?? 'pending'}</strong> ({progress.completed}/{progress.total} rows)
+        </p>
+      </div>
 
-      {canCancel && (
-        <button type="button" disabled={isActing} onClick={cancel}>
-          Cancel
-        </button>
-      )}
-      {canResume && (
-        <button type="button" disabled={isActing} onClick={resume}>
-          Resume
-        </button>
-      )}
+      <div className="button-row">
+        {canCancel && (
+          <button type="button" disabled={isActing} onClick={cancel}>
+            Cancel
+          </button>
+        )}
+        {canResume && (
+          <button type="button" disabled={isActing} onClick={resume}>
+            Resume
+          </button>
+        )}
+      </div>
       {actionError && <p role="alert">{actionError}</p>}
     </section>
   )

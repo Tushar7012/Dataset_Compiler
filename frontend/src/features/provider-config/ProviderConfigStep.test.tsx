@@ -35,6 +35,24 @@ describe('ProviderConfigStep', () => {
     expect(results).toHaveNoViolations()
   }, 10_000)
 
+  it('moves focus to the step heading on mount', () => {
+    renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={vi.fn()} />)
+    expect(screen.getByRole('heading', { name: /provider configuration/i })).toHaveFocus()
+  })
+
+  it('moves focus to the ready heading after the provider is created', async () => {
+    const user = userEvent.setup()
+    mockCreateProvider.mockResolvedValue({ id: 'prov-1', name: 'ollama', endpoint_scope: 'local' })
+    renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={vi.fn()} />)
+
+    await user.type(screen.getByLabelText(/provider name/i), 'ollama')
+    await user.type(screen.getByLabelText(/base url/i), 'http://127.0.0.1:11434')
+    await user.type(screen.getByLabelText(/^model$/i), 'llama3')
+    await user.click(screen.getByRole('button', { name: /create provider/i }))
+
+    expect(await screen.findByRole('heading', { name: /provider ready/i })).toHaveFocus()
+  })
+
   it('creates a local provider and enables Continue with no consent step', async () => {
     const user = userEvent.setup()
     mockCreateProvider.mockResolvedValue({ id: 'prov-1', name: 'ollama', endpoint_scope: 'local' })

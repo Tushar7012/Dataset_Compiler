@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { confirmMapping, getSourceSchema, normalizePreview } from '../../api/structured'
 import { ApiError } from '../../api/client'
+import { useFocusOnMount } from '../../useFocusOnMount'
 import type { NormalizePreviewResponse, SchemaDetection } from '../../api/types'
 
 interface ColumnMappingStepProps {
@@ -12,6 +13,98 @@ interface ColumnMappingStepProps {
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message
   return 'Something went wrong. Try again.'
+}
+
+function DetectingPanel({ detectError }: { detectError: string | null }) {
+  const headingRef = useFocusOnMount<HTMLHeadingElement>()
+  return (
+    <section className="wizard-step">
+      <h2 ref={headingRef} tabIndex={-1}>
+        Detecting format
+      </h2>
+      <p role="alert">{detectError ?? 'Detecting format…'}</p>
+    </section>
+  )
+}
+
+function MappingPanel({
+  detected,
+  mapping,
+  setMapping,
+  preview,
+  previewError,
+  isLoadingPreview,
+  confirmError,
+  isConfirming,
+  onPreview,
+  onConfirm,
+}: {
+  detected: SchemaDetection
+  mapping: Record<string, string>
+  setMapping: Dispatch<SetStateAction<Record<string, string>>>
+  preview: NormalizePreviewResponse | null
+  previewError: string | null
+  isLoadingPreview: boolean
+  confirmError: string | null
+  isConfirming: boolean
+  onPreview: () => void
+  onConfirm: () => void
+}) {
+  const headingRef = useFocusOnMount<HTMLHeadingElement>()
+  return (
+    <section className="wizard-step">
+      <h2 ref={headingRef} tabIndex={-1}>
+        Column mapping
+      </h2>
+      <p>
+        Detected format: <strong>{detected.schema_name ?? 'unrecognized'}</strong>
+      </p>
+
+      {detected.schema_name === null && (
+        <div>
+          <p>Map each column to a training field:</p>
+          {detected.columns.map((column) => (
+            <div className="field" key={column}>
+              <label htmlFor={`map-${column}`}>{column}</label>
+              <input
+                id={`map-${column}`}
+                value={mapping[column] ?? ''}
+                onChange={(event) => setMapping((previous) => ({ ...previous, [column]: event.target.value }))}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="button-row">
+        <button type="button" disabled={isLoadingPreview} onClick={onPreview}>
+          Preview normalized rows
+        </button>
+      </div>
+      {previewError && <p role="alert">{previewError}</p>}
+
+      {preview && (
+        <div className="card">
+          <p>
+            {preview.total_rows} row(s) found, format: {preview.schema_name}
+          </p>
+          <ol>
+            {preview.preview.map((record, index) => (
+              <li key={index}>
+                <pre>{JSON.stringify(record, null, 2)}</pre>
+              </li>
+            ))}
+          </ol>
+          <div className="button-row">
+            <button type="button" disabled={isConfirming} onClick={onConfirm}>
+              Confirm
+            </button>
+          </div>
+          {confirmError && <p role="alert">{confirmError}</p>}
+        </div>
+      )}
+    </section>
+  )
 }
 
 export function ColumnMappingStep({ projectId, sourceId, onSchemaConfirmed }: ColumnMappingStepProps) {
@@ -51,54 +144,21 @@ export function ColumnMappingStep({ projectId, sourceId, onSchemaConfirmed }: Co
   }
 
   if (!detected) {
-    return <p role="alert">{detectError ?? 'Detecting format…'}</p>
+    return <DetectingPanel detectError={detectError} />
   }
 
   return (
-    <section>
-      <p>
-        Detected format: <strong>{detected.schema_name ?? 'unrecognized'}</strong>
-      </p>
-
-      {detected.schema_name === null && (
-        <div>
-          <p>Map each column to a training field:</p>
-          {detected.columns.map((column) => (
-            <div key={column}>
-              <label htmlFor={`map-${column}`}>{column}</label>
-              <input
-                id={`map-${column}`}
-                value={mapping[column] ?? ''}
-                onChange={(event) => setMapping((previous) => ({ ...previous, [column]: event.target.value }))}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-
-      <button type="button" disabled={isLoadingPreview} onClick={loadPreview}>
-        Preview normalized rows
-      </button>
-      {previewError && <p role="alert">{previewError}</p>}
-
-      {preview && (
-        <>
-          <p>
-            {preview.total_rows} row(s) found, format: {preview.schema_name}
-          </p>
-          <ol>
-            {preview.preview.map((record, index) => (
-              <li key={index}>
-                <pre>{JSON.stringify(record, null, 2)}</pre>
-              </li>
-            ))}
-          </ol>
-          <button type="button" disabled={isConfirming} onClick={confirm}>
-            Confirm
-          </button>
-          {confirmError && <p role="alert">{confirmError}</p>}
-        </>
-      )}
-    </section>
+    <MappingPanel
+      detected={detected}
+      mapping={mapping}
+      setMapping={setMapping}
+      preview={preview}
+      previewError={previewError}
+      isLoadingPreview={isLoadingPreview}
+      confirmError={confirmError}
+      isConfirming={isConfirming}
+      onPreview={loadPreview}
+      onConfirm={confirm}
+    />
   )
 }
