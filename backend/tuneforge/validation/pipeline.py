@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
+from tuneforge.providers.protocol import RunConsent
 from tuneforge.records import DPORecord
 from tuneforge.validation.deduplication import deduplicate
 from tuneforge.validation.judging import JudgingError, judge_dpo_preference, judge_quality
@@ -26,6 +27,7 @@ async def run_validation_pipeline(
     tokenizer,
     max_tokens: int,
     judge: OpenAICompatibleProvider | None = None,
+    consent: RunConsent | None = None,
     apply_sft_judging: bool = False,
     dpo_judge_margin: float = 1.0,
 ) -> ValidationReport:
@@ -67,7 +69,7 @@ async def run_validation_pipeline(
                 raise ValueError("DPO records require a judge provider — judging is mandatory, not optional")
             judged_any = True
             try:
-                if not await judge_dpo_preference(judge, record, margin=dpo_judge_margin):
+                if not await judge_dpo_preference(judge, record, margin=dpo_judge_margin, consent=consent):
                     report.record_rejection("dpo_preference_not_confirmed")
                     continue
             except JudgingError:
@@ -76,7 +78,7 @@ async def run_validation_pipeline(
         elif apply_sft_judging and judge is not None:
             judged_any = True
             try:
-                if not await judge_quality(judge, record):
+                if not await judge_quality(judge, record, consent=consent):
                     report.record_rejection("quality_judged_insufficient")
                     continue
             except JudgingError:

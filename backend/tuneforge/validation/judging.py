@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
-from tuneforge.providers.protocol import GenerationRequest
+from tuneforge.providers.protocol import GenerationRequest, RunConsent
 from tuneforge.records import DPORecord
 from tuneforge.validation.structural import render_record_text
 
@@ -12,7 +12,13 @@ class JudgingError(RuntimeError):
     pass
 
 
-async def judge_quality(judge: OpenAICompatibleProvider, record, *, pass_threshold: float = 6.0) -> bool:
+async def judge_quality(
+    judge: OpenAICompatibleProvider,
+    record,
+    *,
+    pass_threshold: float = 6.0,
+    consent: RunConsent | None = None,
+) -> bool:
     """A general quality gate: does this training example look coherent and
     useful? Used as an optional pass for SFT/CPT (PLAN.md: judging is
     optional for those) and as one half of the mandatory DPO gate below.
@@ -25,7 +31,8 @@ async def judge_quality(judge: OpenAICompatibleProvider, record, *, pass_thresho
         'Respond with only a JSON object: {"score": <number 0-10>}'
     )
     response = await judge.generate(
-        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
+        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}),
+        consent=consent,
     )
     try:
         data = json.loads(response.content)
@@ -35,7 +42,13 @@ async def judge_quality(judge: OpenAICompatibleProvider, record, *, pass_thresho
     return score >= pass_threshold
 
 
-async def judge_dpo_preference(judge: OpenAICompatibleProvider, record: DPORecord, *, margin: float = 1.0) -> bool:
+async def judge_dpo_preference(
+    judge: OpenAICompatibleProvider,
+    record: DPORecord,
+    *,
+    margin: float = 1.0,
+    consent: RunConsent | None = None,
+) -> bool:
     """DPO-specific and mandatory (PLAN.md): an *independent* re-check that
     chosen is actually better than rejected. Separate from whatever judging
     happened during generation (Task 9) — a normalized/imported DPO dataset
@@ -51,7 +64,8 @@ async def judge_dpo_preference(judge: OpenAICompatibleProvider, record: DPORecor
         'Respond with only a JSON object: {"score_a": <0-10>, "score_b": <0-10>}'
     )
     response = await judge.generate(
-        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
+        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}),
+        consent=consent,
     )
     try:
         data = json.loads(response.content)

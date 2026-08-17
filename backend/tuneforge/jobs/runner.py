@@ -106,7 +106,7 @@ async def _run_generation_async(
 
             if generated_records:
                 report = await run_validation_pipeline(
-                    generated_records, tokenizer=tokenizer, max_tokens=max_tokens, judge=judge
+                    generated_records, tokenizer=tokenizer, max_tokens=max_tokens, judge=judge, consent=consent
                 )
                 # examples_per_chunk can produce more accepted rows than one
                 # chunk's fair share of what's left — never write past target_rows.
@@ -374,6 +374,7 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
                         tokenizer=tokenizer.tokenizer,
                         max_tokens=model_profile.context_length or 2048,
                         judge=judge,
+                        consent=consent,
                     )
                 )
                 with output_path.open("a", encoding="utf-8") as output_file:
