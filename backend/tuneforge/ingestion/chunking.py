@@ -48,7 +48,7 @@ def chunk_into_source_records(
                 source_hash=source_hash,
                 page=page,
                 heading=heading,
-                metadata={"headings": list(chunk.meta.headings)},
+                metadata={"headings": list(chunk.meta.headings or [])},
             )
         )
     return records

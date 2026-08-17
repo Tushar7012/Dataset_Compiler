@@ -36,6 +36,26 @@ def test_chunks_carry_heading_and_are_grounded_in_source_text(tmp_path):
         assert record.source_name == "policy.md"
 
 
+def test_chunks_with_no_heading_do_not_crash(tmp_path):
+    # A chunk with no heading context above it has meta.headings=None (not
+    # an empty list) — found via a real 50-page .docx during a manual E2E
+    # pass, where chunk_into_source_records crashed with
+    # TypeError: 'NoneType' object is not iterable.
+    path = tmp_path / "no_heading.md"
+    path.write_text("Just a plain paragraph with no heading at all above it.\n")
+    document = convert_document(path)
+    tokenizer = build_tokenizer("gpt2", max_tokens=64)
+    document_id = uuid.uuid4()
+
+    records = chunk_into_source_records(
+        document, document_id=document_id, source_name="no_heading.md", source_hash="abc", tokenizer=tokenizer
+    )
+
+    assert len(records) >= 1
+    assert records[0].heading is None
+    assert records[0].metadata["headings"] == []
+
+
 def test_chunk_ids_are_unique_and_stable_within_a_document(tmp_path):
     path = tmp_path / "policy.md"
     path.write_text("# Title\n\nFirst paragraph.\n\nSecond paragraph.\n")
