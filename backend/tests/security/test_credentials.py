@@ -1,3 +1,7 @@
+import os
+import subprocess
+from pathlib import Path
+
 import pytest
 from keyring.errors import PasswordDeleteError
 
@@ -82,3 +86,38 @@ def test_resolved_secrets_tracks_env_sourced_values(monkeypatch):
 def test_resolved_secrets_does_not_include_unresolved_credentials():
     credentials.store_api_key("provider-never-resolved", "should-not-appear")
     assert "should-not-appear" not in credentials.resolved_secrets()
+
+
+def test_dotenv_loads_on_a_real_cold_interpreter_start(tmp_path):
+    # monkeypatch.setenv only proves get_api_key reads os.environ correctly —
+    # it never re-exercises the module-level `load_dotenv(_DOTENV_PATH)` call,
+    # since that line only runs once per interpreter, at import time, and
+    # tuneforge.security.credentials is already imported and cached for the
+    # rest of this pytest process. Only a genuinely separate interpreter
+    # (spawned the same way `uv run python -m tuneforge.main` is, in real
+    # use) re-runs that line against a real file on disk.
+    backend_dir = Path(__file__).resolve().parents[2]
+    env_file = tmp_path / ".env"
+    env_file.write_text("GEMINI_API_KEY=cold-start-secret-value-123\n")
+
+    # Must NOT inherit the parent test process's os.environ wholesale — this
+    # process already ran the real load_dotenv() at import time (against the
+    # real repo-root .env), so GEMINI_API_KEY may already be set here. Passing
+    # os.environ through as-is would let the child see that real value via
+    # plain inheritance, never actually exercising its own dotenv load — and
+    # would leak a real secret into this test's output on any mismatch.
+    clean_env = {k: v for k, v in os.environ.items() if k not in ("GEMINI_API_KEY", "HF_TOKEN")}
+    clean_env["TUNEFORGE_DOTENV_PATH"] = str(env_file)
+
+    script = "from tuneforge.security.credentials import get_api_key; print(get_api_key('gemini'), end='')"
+    result = subprocess.run(
+        ["uv", "run", "python", "-c", script],
+        cwd=backend_dir,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "cold-start-secret-value-123"

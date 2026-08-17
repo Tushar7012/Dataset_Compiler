@@ -18,7 +18,10 @@ _ENV_VAR_BY_WELL_KNOWN_NAME = {
 }
 
 # credentials.py -> security/ -> tuneforge/ -> backend/ -> repo root.
-_DOTENV_PATH = Path(__file__).resolve().parents[3] / ".env"
+# TUNEFORGE_DOTENV_PATH overrides this for a cold-start test (a fresh
+# interpreter pointed at a throwaway .env) without ever touching the repo's
+# real one — unset in normal use, where the real repo-root path applies.
+_DOTENV_PATH = Path(os.environ.get("TUNEFORGE_DOTENV_PATH") or Path(__file__).resolve().parents[3] / ".env")
 load_dotenv(_DOTENV_PATH)  # no-op, does not raise, if the file doesn't exist
 
 
