@@ -14,6 +14,20 @@ import { createProvider } from '../../api/providers'
 
 const mockCreateProvider = vi.mocked(createProvider)
 
+async function createGenerator(
+  user: ReturnType<typeof userEvent.setup>,
+  { remote = false }: { remote?: boolean } = {},
+) {
+  if (remote) {
+    await user.selectOptions(screen.getByLabelText(/endpoint scope/i), 'remote')
+  }
+  await user.type(screen.getByLabelText(/provider name/i), 'ollama')
+  await user.type(screen.getByLabelText(/base url/i), 'http://127.0.0.1:11434')
+  await user.type(screen.getByLabelText(/^model$/i), 'llama3')
+  await user.click(screen.getByRole('button', { name: /create provider/i }))
+  await screen.findByRole('heading', { name: /judge model/i })
+}
+
 describe('ProviderConfigStep', () => {
   it('renders the provider fields with no consent section yet', () => {
     renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={vi.fn()} />)
@@ -40,66 +54,45 @@ describe('ProviderConfigStep', () => {
     expect(screen.getByRole('heading', { name: /provider configuration/i })).toHaveFocus()
   })
 
-  it('moves focus to the ready heading after the provider is created', async () => {
+  it('shows the judge-model choice after the generator provider is created', async () => {
     const user = userEvent.setup()
     mockCreateProvider.mockResolvedValue({ id: 'prov-1', name: 'ollama', endpoint_scope: 'local' })
     renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={vi.fn()} />)
 
-    await user.type(screen.getByLabelText(/provider name/i), 'ollama')
-    await user.type(screen.getByLabelText(/base url/i), 'http://127.0.0.1:11434')
-    await user.type(screen.getByLabelText(/^model$/i), 'llama3')
-    await user.click(screen.getByRole('button', { name: /create provider/i }))
+    await createGenerator(user)
 
-    expect(await screen.findByRole('heading', { name: /provider ready/i })).toHaveFocus()
+    expect(screen.getByRole('heading', { name: /judge model/i })).toHaveFocus()
+    expect(screen.getByRole('button', { name: /add judge provider/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /skip.*no judge model/i })).toBeInTheDocument()
   })
 
-  it('creates a local provider and enables Continue with no consent step', async () => {
+  it('skipping the judge choice reaches Continue with no consent step for a local generator', async () => {
     const user = userEvent.setup()
     mockCreateProvider.mockResolvedValue({ id: 'prov-1', name: 'ollama', endpoint_scope: 'local' })
-    renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={vi.fn()} />)
-
-    await user.type(screen.getByLabelText(/provider name/i), 'ollama')
-    await user.type(screen.getByLabelText(/base url/i), 'http://127.0.0.1:11434')
-    await user.type(screen.getByLabelText(/^model$/i), 'llama3')
-    await user.click(screen.getByRole('button', { name: /create provider/i }))
-
-    expect(await screen.findByRole('button', { name: /continue/i })).toBeEnabled()
-    expect(mockCreateProvider).toHaveBeenCalledWith('proj-1', {
-      name: 'ollama',
-      base_url: 'http://127.0.0.1:11434',
-      model: 'llama3',
-      endpoint_scope: 'local',
-      api_key: '',
-    })
-  })
-
-  it('calls onProviderReady with remoteConsentGranted=false for a local provider', async () => {
-    const user = userEvent.setup()
-    const provider = { id: 'prov-1', name: 'ollama', endpoint_scope: 'local' as const }
-    mockCreateProvider.mockResolvedValue(provider)
     const onProviderReady = vi.fn()
     renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={onProviderReady} />)
 
-    await user.type(screen.getByLabelText(/provider name/i), 'ollama')
-    await user.type(screen.getByLabelText(/base url/i), 'http://127.0.0.1:11434')
-    await user.type(screen.getByLabelText(/^model$/i), 'llama3')
-    await user.click(screen.getByRole('button', { name: /create provider/i }))
-    await user.click(await screen.findByRole('button', { name: /continue/i }))
+    await createGenerator(user)
+    await user.click(screen.getByRole('button', { name: /skip.*no judge model/i }))
 
-    expect(onProviderReady).toHaveBeenCalledWith(provider, false)
+    const continueButton = await screen.findByRole('button', { name: /continue/i })
+    expect(continueButton).toBeEnabled()
+    await user.click(continueButton)
+
+    expect(onProviderReady).toHaveBeenCalledWith(
+      { id: 'prov-1', name: 'ollama', endpoint_scope: 'local' },
+      undefined,
+      false,
+    )
   })
 
-  it('requires an explicit consent checkbox for a remote provider before Continue is enabled', async () => {
+  it('requires an explicit consent checkbox for a remote generator before Continue is enabled', async () => {
     const user = userEvent.setup()
-    const provider = { id: 'prov-1', name: 'openai', endpoint_scope: 'remote' as const }
-    mockCreateProvider.mockResolvedValue(provider)
+    mockCreateProvider.mockResolvedValue({ id: 'prov-1', name: 'openai', endpoint_scope: 'remote' })
     renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={vi.fn()} />)
 
-    await user.selectOptions(screen.getByLabelText(/endpoint scope/i), 'remote')
-    await user.type(screen.getByLabelText(/provider name/i), 'openai')
-    await user.type(screen.getByLabelText(/base url/i), 'https://api.openai.com/v1')
-    await user.type(screen.getByLabelText(/^model$/i), 'gpt-4')
-    await user.click(screen.getByRole('button', { name: /create provider/i }))
+    await createGenerator(user, { remote: true })
+    await user.click(screen.getByRole('button', { name: /skip.*no judge model/i }))
 
     const consentCheckbox = await screen.findByLabelText(/consent/i)
     const continueButton = screen.getByRole('button', { name: /continue/i })
@@ -109,22 +102,51 @@ describe('ProviderConfigStep', () => {
     expect(continueButton).toBeEnabled()
   })
 
-  it('calls onProviderReady with remoteConsentGranted=true once consent is checked', async () => {
+  it('adding a judge provider shows a second, distinct provider form and both are reported ready', async () => {
     const user = userEvent.setup()
-    const provider = { id: 'prov-1', name: 'openai', endpoint_scope: 'remote' as const }
-    mockCreateProvider.mockResolvedValue(provider)
+    mockCreateProvider
+      .mockResolvedValueOnce({ id: 'prov-gen', name: 'ollama', endpoint_scope: 'local' })
+      .mockResolvedValueOnce({ id: 'prov-judge', name: 'hf-router-judge', endpoint_scope: 'remote' })
     const onProviderReady = vi.fn()
     renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={onProviderReady} />)
 
+    await createGenerator(user)
+    await user.click(screen.getByRole('button', { name: /add judge provider/i }))
+
+    expect(screen.getByRole('heading', { name: /judge provider configuration/i })).toHaveFocus()
+    await user.type(screen.getByLabelText(/provider name/i), 'hf-router-judge')
+    await user.type(screen.getByLabelText(/base url/i), 'https://router.huggingface.co/v1')
+    await user.type(screen.getByLabelText(/^model$/i), 'Qwen/Qwen3-235B-A22B-Thinking-2507')
     await user.selectOptions(screen.getByLabelText(/endpoint scope/i), 'remote')
-    await user.type(screen.getByLabelText(/provider name/i), 'openai')
-    await user.type(screen.getByLabelText(/base url/i), 'https://api.openai.com/v1')
-    await user.type(screen.getByLabelText(/^model$/i), 'gpt-4')
     await user.click(screen.getByRole('button', { name: /create provider/i }))
-    await user.click(await screen.findByLabelText(/consent/i))
+
+    expect(await screen.findByText('hf-router-judge')).toBeInTheDocument()
+    const consentCheckbox = screen.getByLabelText(/consent/i)
+    await user.click(consentCheckbox)
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
-    expect(onProviderReady).toHaveBeenCalledWith(provider, true)
+    expect(onProviderReady).toHaveBeenCalledWith(
+      { id: 'prov-gen', name: 'ollama', endpoint_scope: 'local' },
+      { id: 'prov-judge', name: 'hf-router-judge', endpoint_scope: 'remote' },
+      true,
+    )
+  })
+
+  it('the Hugging Face router preset fills base URL, model, and remote scope', async () => {
+    const user = userEvent.setup()
+    mockCreateProvider.mockResolvedValue({ id: 'prov-1', name: 'hf-router-generator', endpoint_scope: 'remote' })
+    renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: /use hugging face router/i }))
+    await user.click(screen.getByRole('button', { name: /create provider/i }))
+
+    expect(mockCreateProvider).toHaveBeenCalledWith('proj-1', {
+      name: 'hf-router-generator',
+      base_url: 'https://router.huggingface.co/v1',
+      model: 'Qwen/Qwen3-Next-80B-A3B-Instruct',
+      endpoint_scope: 'remote',
+      api_key: '',
+    })
   })
 
   it('shows a validation error when provider creation fails', async () => {

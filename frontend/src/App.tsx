@@ -14,9 +14,9 @@ type WizardStep =
   | 'project'
   | 'model'
   | 'goal-suggestion'
+  | 'provider'
   | 'goal'
   | 'plan'
-  | 'provider'
   | 'preview'
   | 'progress'
   | 'export'
@@ -31,6 +31,7 @@ function App() {
   })
   const [plan, setPlan] = useState<TrainingPlanResponse | null>(null)
   const [provider, setProvider] = useState<ProviderProfile | null>(null)
+  const [judgeProvider, setJudgeProvider] = useState<ProviderProfile | null>(null)
   const [remoteConsentGranted, setRemoteConsentGranted] = useState(false)
   const [fullRunId, setFullRunId] = useState<string | null>(null)
 
@@ -63,15 +64,29 @@ function App() {
           projectId={project.id}
           onDecision={(goal, desiredBehavior) => {
             setGoalDecision({ goal, desiredBehavior })
+            setStep('provider')
+          }}
+        />
+      )}
+
+      {step === 'provider' && project && (
+        <ProviderConfigStep
+          projectId={project.id}
+          onProviderReady={(readyProvider, readyJudgeProvider, consentGranted) => {
+            setProvider(readyProvider)
+            setJudgeProvider(readyJudgeProvider ?? null)
+            setRemoteConsentGranted(consentGranted)
             setStep('goal')
           }}
         />
       )}
 
-      {step === 'goal' && project && modelProfile && (
+      {step === 'goal' && project && modelProfile && provider && (
         <GoalWizardStep
           projectId={project.id}
           modelProfileId={modelProfile.id}
+          generatorProfileId={provider.id}
+          judgeProfileId={judgeProvider?.id}
           initialGoal={goalDecision.goal ?? undefined}
           initialDesiredBehavior={goalDecision.desiredBehavior}
           onPlanRecommended={(recommendedPlan) => {
@@ -85,17 +100,6 @@ function App() {
         <PlanConfirmationStep
           plan={plan}
           onApproved={() => {
-            setStep('provider')
-          }}
-        />
-      )}
-
-      {step === 'provider' && project && (
-        <ProviderConfigStep
-          projectId={project.id}
-          onProviderReady={(readyProvider, consentGranted) => {
-            setProvider(readyProvider)
-            setRemoteConsentGranted(consentGranted)
             setStep('preview')
           }}
         />
@@ -105,6 +109,7 @@ function App() {
         <PreviewStep
           planId={plan.id}
           generatorProfileId={provider.id}
+          judgeProfileId={judgeProvider?.id}
           remoteConsentGranted={remoteConsentGranted}
           onApprovedFull={(fullRun) => {
             setFullRunId(fullRun.id)

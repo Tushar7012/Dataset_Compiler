@@ -8,6 +8,8 @@ import type { TrainingGoal, TrainingPlanResponse } from '../../api/types'
 interface GoalWizardStepProps {
   projectId: string
   modelProfileId: string
+  generatorProfileId: string
+  judgeProfileId?: string
   initialGoal?: TrainingGoal
   initialDesiredBehavior?: string
   onPlanRecommended: (plan: TrainingPlanResponse) => void
@@ -23,6 +25,8 @@ function errorDisplay(error: unknown): { message: string; needsProviderSetup: bo
 export function GoalWizardStep({
   projectId,
   modelProfileId,
+  generatorProfileId,
+  judgeProfileId,
   initialGoal,
   initialDesiredBehavior,
   onPlanRecommended,
@@ -47,6 +51,8 @@ export function GoalWizardStep({
         desired_behavior: desiredBehavior,
         language,
         target_rows: targetRows as number,
+        generator_profile_id: generatorProfileId,
+        ...(judgeProfileId ? { judge_profile_id: judgeProfileId } : {}),
       }),
     onSuccess: (plan) => onPlanRecommended(plan),
   })

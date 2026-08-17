@@ -37,7 +37,7 @@ describe('GoalWizardStep', () => {
   })
 
   it('renders goal, desired behavior, and language, with no manual target-rows input', async () => {
-    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />)
+    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" generatorProfileId="gen-1" onPlanRecommended={vi.fn()} />)
 
     expect(screen.getByLabelText(/training goal/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/desired behavior/i)).toBeInTheDocument()
@@ -48,7 +48,7 @@ describe('GoalWizardStep', () => {
 
   it('has no axe-detectable accessibility violations', async () => {
     const { container } = renderWithProviders(
-      <GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />,
+      <GoalWizardStep projectId="proj-1" modelProfileId="profile-1" generatorProfileId="gen-1" onPlanRecommended={vi.fn()} />,
     )
     await screen.findByLabelText(/training goal/i)
     const results = await axe(container)
@@ -57,21 +57,21 @@ describe('GoalWizardStep', () => {
 
   it('moves focus to the step heading on mount', () => {
     renderWithProviders(
-      <GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />,
+      <GoalWizardStep projectId="proj-1" modelProfileId="profile-1" generatorProfileId="gen-1" onPlanRecommended={vi.fn()} />,
     )
     expect(screen.getByRole('heading', { name: /^training goal$/i })).toHaveFocus()
   })
 
   it('shows a truncation warning when the estimate exceeds the accepted-row cap', async () => {
     mockEstimateRows.mockResolvedValue({ total_rows: 150_000, truncated: true, capped_at: 100_000 })
-    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />)
+    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" generatorProfileId="gen-1" onPlanRecommended={vi.fn()} />)
 
     expect(await screen.findByText(/only the first 100,000/i)).toBeInTheDocument()
   })
 
   it('disables submit and explains why when the estimate is zero rows', async () => {
     mockEstimateRows.mockResolvedValue({ total_rows: 0, truncated: false, capped_at: 100_000 })
-    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />)
+    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" generatorProfileId="gen-1" onPlanRecommended={vi.fn()} />)
 
     expect(await screen.findByText(/upload a document source/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /get recommendation/i })).toBeDisabled()
@@ -79,7 +79,7 @@ describe('GoalWizardStep', () => {
 
   it('disables submit until the row estimate has loaded', () => {
     mockEstimateRows.mockReturnValue(new Promise(() => {}))
-    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />)
+    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" generatorProfileId="gen-1" onPlanRecommended={vi.fn()} />)
 
     expect(screen.getByRole('button', { name: /get recommendation/i })).toBeDisabled()
   })
@@ -90,7 +90,12 @@ describe('GoalWizardStep', () => {
     mockRecommendPlan.mockResolvedValue(plan)
     const onPlanRecommended = vi.fn()
     renderWithProviders(
-      <GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={onPlanRecommended} />,
+      <GoalWizardStep
+        projectId="proj-1"
+        modelProfileId="profile-1"
+        generatorProfileId="gen-1"
+        onPlanRecommended={onPlanRecommended}
+      />,
     )
 
     await screen.findByText(/only the first 100,000/i)
@@ -103,8 +108,37 @@ describe('GoalWizardStep', () => {
       desired_behavior: 'Answer HR policy questions',
       language: 'en',
       target_rows: 100_000,
+      generator_profile_id: 'gen-1',
     })
     expect(onPlanRecommended).toHaveBeenCalledWith(plan)
+  })
+
+  it('includes judge_profile_id in the recommendation when a judge provider was configured', async () => {
+    const user = userEvent.setup()
+    mockRecommendPlan.mockResolvedValue(plan)
+    renderWithProviders(
+      <GoalWizardStep
+        projectId="proj-1"
+        modelProfileId="profile-1"
+        generatorProfileId="gen-1"
+        judgeProfileId="judge-1"
+        onPlanRecommended={vi.fn()}
+      />,
+    )
+
+    await screen.findByText('42')
+    await user.selectOptions(screen.getByLabelText(/training goal/i), 'preference_alignment')
+    await user.type(screen.getByLabelText(/desired behavior/i), 'Be concise')
+    await user.click(screen.getByRole('button', { name: /get recommendation/i }))
+
+    expect(mockRecommendPlan).toHaveBeenCalledWith('proj-1', 'profile-1', {
+      goal: 'preference_alignment',
+      desired_behavior: 'Be concise',
+      language: 'en',
+      target_rows: 42,
+      generator_profile_id: 'gen-1',
+      judge_profile_id: 'judge-1',
+    })
   })
 
   it('pre-fills goal and desired behavior from initialGoal/initialDesiredBehavior props', () => {
@@ -112,6 +146,7 @@ describe('GoalWizardStep', () => {
       <GoalWizardStep
         projectId="proj-1"
         modelProfileId="profile-1"
+        generatorProfileId="gen-1"
         initialGoal="preference_alignment"
         initialDesiredBehavior="Be concise"
         onPlanRecommended={vi.fn()}
@@ -127,7 +162,7 @@ describe('GoalWizardStep', () => {
     mockRecommendPlan.mockRejectedValue(
       new ApiError(409, "org/base-model has no chat template, which 'multi_turn_conversation' requires"),
     )
-    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />)
+    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" generatorProfileId="gen-1" onPlanRecommended={vi.fn()} />)
 
     await screen.findByText('42')
     await user.type(screen.getByLabelText(/desired behavior/i), 'x')
@@ -139,7 +174,7 @@ describe('GoalWizardStep', () => {
   it('surfaces the distinct-judge-required rejection for preference alignment', async () => {
     const user = userEvent.setup()
     mockRecommendPlan.mockRejectedValue(new ApiError(409, 'dpo requires a generator_profile_id'))
-    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" onPlanRecommended={vi.fn()} />)
+    renderWithProviders(<GoalWizardStep projectId="proj-1" modelProfileId="profile-1" generatorProfileId="gen-1" onPlanRecommended={vi.fn()} />)
 
     await screen.findByText('42')
     await user.selectOptions(screen.getByLabelText(/training goal/i), 'preference_alignment')
