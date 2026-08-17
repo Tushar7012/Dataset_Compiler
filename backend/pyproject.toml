@@ -17,6 +17,7 @@ dependencies = [
     "datasketch>=2.0.0",
     "datasets>=5.0.0",
     "python-multipart>=0.0.20",
+    "python-dotenv>=1.2.2",
 ]
 
 [dependency-groups]
