@@ -75,6 +75,45 @@ def test_get_unknown_run_returns_404(client):
     assert response.status_code == 404
 
 
+def test_get_run_exposes_the_generated_normalized_breakdown_and_skipped_sources(client):
+    session = _session(client)
+    project = ProjectRepository(session, client.artifact_store).create("proj")
+    plan, provider = _make_plan_and_provider(client, project.id)
+    skipped = [{"source_id": "src-1", "reason": "schema mismatch"}]
+    run = RunRecord(
+        id=uuid.uuid4(), project_id=project.id, plan_id=plan.id, generator_profile_id=provider.id,
+        status="completed", completed_rows=3, total_rows=3, accepted_generated=2, accepted_normalized=1,
+        structured_sources_skipped=json.dumps(skipped),
+    )
+    session = _session(client)
+    session.add(run)
+    session.commit()
+
+    response = client.get(f"/api/runs/{run.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["accepted_generated"] == 2
+    assert body["accepted_normalized"] == 1
+    assert body["structured_sources_skipped"] == skipped
+
+
+def test_get_run_reports_no_skipped_sources_as_an_empty_list(client):
+    session = _session(client)
+    project = ProjectRepository(session, client.artifact_store).create("proj")
+    plan, provider = _make_plan_and_provider(client, project.id)
+    run = RunRecord(
+        id=uuid.uuid4(), project_id=project.id, plan_id=plan.id, generator_profile_id=provider.id, status="pending",
+    )
+    session = _session(client)
+    session.add(run)
+    session.commit()
+
+    response = client.get(f"/api/runs/{run.id}")
+
+    assert response.json()["structured_sources_skipped"] == []
+
+
 def test_cancel_sets_status_to_cancel_requested(client):
     session = _session(client)
     project = ProjectRepository(session, client.artifact_store).create("proj")

@@ -93,6 +93,11 @@ async def get_run(run_id: uuid.UUID, session: Session = Depends(get_session)):
         "total_rows": run.total_rows,
         "is_preview": run.is_preview,
         "assurance_level": run.assurance_level,
+        "accepted_generated": run.accepted_generated,
+        "accepted_normalized": run.accepted_normalized,
+        "structured_sources_skipped": (
+            json.loads(run.structured_sources_skipped) if run.structured_sources_skipped else []
+        ),
     }
 
 

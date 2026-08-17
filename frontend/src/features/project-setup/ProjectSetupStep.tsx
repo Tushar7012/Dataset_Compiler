@@ -10,10 +10,11 @@ interface ProjectSetupStepProps {
   onProjectReady: (project: Project) => void
 }
 
-type MappingStatus = 'checking' | 'document' | 'awaiting-mapping' | 'mapped'
+type MappingStatus = 'checking' | 'document' | 'awaiting-mapping' | 'mapped' | 'probe-failed'
 
 interface SourceWithStatus extends Source {
   mappingStatus: MappingStatus
+  probeError?: string
 }
 
 function errorMessage(error: unknown): string {
@@ -26,8 +27,28 @@ export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
   const [project, setProject] = useState<Project | null>(null)
   const [sources, setSources] = useState<SourceWithStatus[]>([])
 
-  const setSourceStatus = (sourceId: string, mappingStatus: MappingStatus) =>
-    setSources((previous) => previous.map((source) => (source.id === sourceId ? { ...source, mappingStatus } : source)))
+  const setSourceStatus = (sourceId: string, mappingStatus: MappingStatus, probeError?: string) =>
+    setSources((previous) =>
+      previous.map((source) => (source.id === sourceId ? { ...source, mappingStatus, probeError } : source)),
+    )
+
+  const probeSchema = (sourceId: string) => {
+    setSourceStatus(sourceId, 'checking')
+    getSourceSchema(project!.id, sourceId)
+      .then(() => setSourceStatus(sourceId, 'awaiting-mapping'))
+      .catch((error: unknown) => {
+        // A 422 means the file genuinely didn't load as structured rows —
+        // that's the expected "this is a document" signal. Anything else
+        // (a network blip, a 500) is a real error and must not be silently
+        // treated as "fine, it's a document" — that would hide a failure
+        // the user needs to see and retry.
+        if (error instanceof ApiError && error.status === 422) {
+          setSourceStatus(sourceId, 'document')
+        } else {
+          setSourceStatus(sourceId, 'probe-failed', errorMessage(error))
+        }
+      })
+  }
 
   const createProjectMutation = useMutation({
     mutationFn: () => createProject(name),
@@ -38,9 +59,7 @@ export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
     mutationFn: (file: File) => uploadSource(project!.id, file),
     onSuccess: (source) => {
       setSources((previous) => [...previous, { ...source, mappingStatus: 'checking' }])
-      getSourceSchema(project!.id, source.id)
-        .then(() => setSourceStatus(source.id, 'awaiting-mapping'))
-        .catch(() => setSourceStatus(source.id, 'document'))
+      probeSchema(source.id)
     },
   })
 
@@ -88,6 +107,14 @@ export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
                 sourceId={source.id}
                 onSchemaConfirmed={() => setSourceStatus(source.id, 'mapped')}
               />
+            )}
+            {source.mappingStatus === 'probe-failed' && (
+              <>
+                <p role="alert">{source.probeError}</p>
+                <button type="button" onClick={() => probeSchema(source.id)}>
+                  Retry
+                </button>
+              </>
             )}
           </li>
         ))}

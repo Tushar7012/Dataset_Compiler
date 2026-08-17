@@ -495,6 +495,52 @@ def test_worker_merges_structured_records_into_a_completed_run(env, monkeypatch,
     assert len(output_lines) == 1
 
 
+def test_worker_does_not_re_merge_structured_records_when_already_merged(env, monkeypatch, tmp_path):
+    session, artifact_store, project, run = env
+    from tuneforge.storage.repositories import SourceRepository
+
+    source_repo = SourceRepository(session, artifact_store)
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("text\nStandalone fact.\n")
+    _confirm_structured_source(session, source_repo, project.id, csv_path, "text")
+
+    # Simulate a run that already finished its structured merge once (the
+    # normal end state _run_generation_async + the merge block leave behind),
+    # then got resumed (e.g. after some unrelated later failure).
+    run.status = "completed"
+    run.accepted_generated = 0
+    run.accepted_normalized = 1
+    run.completed_rows = 1
+    run.total_rows = 1
+    run.structured_merge_completed_at = datetime.now(timezone.utc)
+    session.commit()
+
+    output_path = run_output_path(artifact_store.base_dir, project.id, run.id)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text('{"text": "Standalone fact.", "metadata": {}}\n')
+
+    db_path = session.get_bind().url.database
+    session.close()
+
+    class _FakeTok:
+        tokenizer = _FakeTokenizer()
+
+    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
+    monkeypatch.setattr(
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+    )
+    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
+
+    run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
+
+    check_session = create_session_factory(create_sqlite_engine(Path(db_path)))()
+    stored = check_session.get(RunRecord, run.id)
+    assert stored.accepted_normalized == 1  # unchanged, not re-merged
+
+    output_lines = output_path.read_text().strip().splitlines()
+    assert len(output_lines) == 1  # not duplicated
+
+
 def test_worker_marks_run_failed_when_load_project_sources_raises(env, monkeypatch):
     session, artifact_store, project, run = env
     db_path = session.get_bind().url.database

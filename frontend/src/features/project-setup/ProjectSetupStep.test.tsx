@@ -148,6 +148,27 @@ describe('ProjectSetupStep', () => {
     expect(screen.queryByRole('button', { name: /confirm mapping/i })).not.toBeInTheDocument()
   })
 
+  it('shows a retryable error (not a silent document fallback) when the schema probe fails for a reason other than 422', async () => {
+    const user = userEvent.setup()
+    mockCreateProject.mockResolvedValue({ id: 'proj-1', name: 'HR Policy Bot', created_at: '2026-08-15T00:00:00Z' })
+    mockUploadSource.mockResolvedValue({ id: 'src-1', filename: 'data.csv', source_hash: 'abc' })
+    mockGetSourceSchema.mockRejectedValueOnce(new ApiError(500, 'internal server error'))
+    renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
+
+    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
+    await user.click(screen.getByRole('button', { name: /create project/i }))
+    const fileInput = await screen.findByLabelText(/upload/i)
+    await user.upload(fileInput, new File(['prompt,completion'], 'data.csv', { type: 'text/csv' }))
+
+    expect(await screen.findByText('internal server error')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled()
+
+    mockGetSourceSchema.mockRejectedValueOnce(new ApiError(422, "unsupported structured format '.csv'"))
+    await user.click(screen.getByRole('button', { name: /retry/i }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled())
+  })
+
   it('disables Continue while the schema probe for a newly uploaded source is still pending', async () => {
     const user = userEvent.setup()
     mockCreateProject.mockResolvedValue({ id: 'proj-1', name: 'HR Policy Bot', created_at: '2026-08-15T00:00:00Z' })

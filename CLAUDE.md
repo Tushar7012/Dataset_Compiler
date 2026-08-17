@@ -38,7 +38,7 @@ Commit per task, message format `feat: ...` / `fix: ...`. Push only when told to
 - `POST /api/plans/{id}/research` (Task 6) has no HTTP endpoint yet — pending a decision on `httpx.AsyncClient` lifecycle ownership.
 - React UI (Task 13): functionally done (setup through export, including structured column mapping) except a dedicated styling/WCAG-AA pass. Windows installer (Task 14), final verification pass (Task 15): not started.
 - `OpenAICompatibleProvider` (`tuneforge/providers/openai_compatible.py`) builds request URLs as `f"{base_url}/chat/completions"` / `f"{base_url}/models"` — the full API path must already be in `base_url` (e.g. `http://127.0.0.1:11434/v1` for Ollama, `https://generativelanguage.googleapis.com/v1beta/openai` for Gemini). It does not assume or append `/v1` itself.
-- Structured-merge is not itself checkpointed/resumable: it only runs once, right after the document-generation phase reaches `status="completed"`, appending directly to `records.jsonl`. No code path re-invokes `run_generation_worker` for an already-completed run today, so this is a known ceiling, not an active bug — revisit if a "re-run a completed run" feature is ever added.
+- Structured-merge guards against re-running on a resumed run via `RunRecord.structured_merge_completed_at` (set once the merge commits), but the guard and the `records.jsonl` append aren't atomic with each other — a crash in that exact window, followed by a resume, could still double-append once. A second resume after that would not compound further. Revisit with an atomic write (temp file + rename) if this ever proves to matter in practice.
 
 ## Testing conventions
 

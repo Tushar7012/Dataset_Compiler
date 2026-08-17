@@ -100,6 +100,10 @@ class RunRecord(Base):
     # sources whose detected schema didn't match the plan's objective and so
     # were left out of this run rather than silently mixed in.
     structured_sources_skipped: Mapped[str | None] = mapped_column(default=None)
+    # Set once the structured-record merge phase finishes committing. Guards
+    # against re-appending the same normalized rows if this run is ever
+    # resumed after the document phase already reached "completed" once.
+    structured_merge_completed_at: Mapped[datetime | None] = mapped_column(default=None)
     assurance_level: Mapped[str | None] = mapped_column(default=None)
     remote_consent_granted_at: Mapped[datetime | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)

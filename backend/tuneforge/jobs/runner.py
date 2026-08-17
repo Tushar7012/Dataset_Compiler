@@ -4,6 +4,7 @@ import json
 import logging
 import multiprocessing
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -297,11 +298,13 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
 
         # Only merge structured rows once the document phase actually finished —
         # a cancelled/still-running run should not pick up a second row stream.
-        # Not itself checkpointed/resumable: a crash during this block, followed
-        # by some future re-invocation of this same completed run, could re-append
-        # the same normalized rows. No code path does that today (a run is only
-        # ever started once), so this is a known ceiling, not a bug being ignored.
-        if run.status == "completed":
+        # structured_merge_completed_at guards against re-appending the same
+        # normalized rows if this run is resumed after already merging once
+        # (e.g. a later, unrelated failure triggers a resume). This does not
+        # cover the narrow window between the file append below and the commit
+        # that sets the flag — a crash exactly there could still double-merge
+        # once; a second resume after that would not compound further.
+        if run.status == "completed" and run.structured_merge_completed_at is None:
             structured_records, skipped = _load_structured_records(
                 session, artifact_store, run.project_id, plan
             )
@@ -329,6 +332,7 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
             run.completed_rows = run.accepted_generated + accepted_normalized
             run.total_rows = run.completed_rows
             run.structured_sources_skipped = json.dumps(skipped) if skipped else None
+            run.structured_merge_completed_at = datetime.now(timezone.utc)
             session.commit()
     except Exception:
         logger.exception("run %s failed", run.id)
