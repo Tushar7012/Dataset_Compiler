@@ -162,6 +162,42 @@ async def test_dpo_record_picks_highest_and_lowest_scored_candidates():
     assert record.prompt[0].content == "How many vacation days?"
 
 
+async def test_dpo_judge_tolerates_a_thinking_model_wrapping_its_score():
+    # A "thinking" judge model wraps its score in a <think>...</think> block and
+    # may not support response_format=json_object at all — the judge call must
+    # still parse the score out of the free-form response.
+    answer_scores = {"bad answer": 2.0, "best answer": 9.0}
+    candidate_answers = iter(["throwaway", "bad answer", "best answer"])
+
+    def handler(request):
+        payload = json.loads(request.content)
+        prompt = payload["messages"][0]["content"]
+        if "QUESTION:" in prompt:
+            assert "response_format" not in payload
+            for answer, score in answer_scores.items():
+                if f"ANSWER: {answer}" in prompt:
+                    text = f"<think>\nconsidering the answer...\n</think>\n{json.dumps({'score': score})}"
+                    return httpx.Response(200, json={"choices": [{"message": {"content": text}}]})
+            raise AssertionError(f"unscored answer in judge prompt: {prompt}")
+        return _chat_response(
+            {
+                "question": "How many vacation days?",
+                "answer": next(candidate_answers),
+                "supporting_quote": "20 days of paid vacation",
+            }
+        )
+
+    generator = _provider(handler)
+    judge = _provider(handler)
+    record = await generate_dpo_record(
+        generator, judge, _source(), GenerationSpec(desired_behavior="dpo", max_candidates=2, score_margin=2.0)
+    )
+
+    assert record is not None
+    assert record.chosen[0].content == "best answer"
+    assert record.rejected[0].content == "bad answer"
+
+
 async def test_dpo_rejects_when_candidate_scores_are_too_close():
     answer_scores = {"answer-a": 5.0, "answer-b": 5.5, "answer-c": 5.2}
     candidate_answers = iter(["throwaway", "answer-a", "answer-b", "answer-c"])

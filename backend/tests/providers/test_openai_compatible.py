@@ -10,8 +10,28 @@ from tuneforge.providers.openai_compatible import (
     ProviderAuthError,
     ProviderResponseError,
     RemoteConsentRequiredError,
+    extract_json_object,
 )
 from tuneforge.providers.protocol import GenerationRequest, ProviderProfile, RunConsent
+
+
+def test_extract_json_object_parses_bare_json():
+    assert extract_json_object('{"score": 8}') == {"score": 8}
+
+
+def test_extract_json_object_strips_a_leading_think_block():
+    text = "<think>\nWeighing the tradeoffs here...\n</think>\n{\"score_a\": 9, \"score_b\": 3}"
+    assert extract_json_object(text) == {"score_a": 9, "score_b": 3}
+
+
+def test_extract_json_object_ignores_prose_around_the_json():
+    text = 'Sure, here is my rating:\n{"score": 7}\nLet me know if you need more detail.'
+    assert extract_json_object(text) == {"score": 7}
+
+
+def test_extract_json_object_raises_when_no_json_present():
+    with pytest.raises(ValueError):
+        extract_json_object("<think>still thinking</think>\nno json here")
 
 
 def make_provider(handler, *, endpoint_scope="local", credential_reference=None, base_url="http://127.0.0.1:9999"):

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
-
-from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
+from tuneforge.providers.openai_compatible import OpenAICompatibleProvider, extract_json_object
 from tuneforge.providers.protocol import GenerationRequest, RunConsent
 from tuneforge.records import DPORecord
 from tuneforge.validation.structural import render_record_text
@@ -31,13 +29,13 @@ async def judge_quality(
         'Respond with only a JSON object: {"score": <number 0-10>}'
     )
     response = await judge.generate(
-        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}),
+        GenerationRequest(messages=[{"role": "user", "content": prompt}]),
         consent=consent,
     )
     try:
-        data = json.loads(response.content)
+        data = extract_json_object(response.content)
         score = float(data["score"])
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+    except (ValueError, KeyError, TypeError) as exc:
         raise JudgingError(f"judge response was not a valid score: {exc}") from exc
     return score >= pass_threshold
 
@@ -64,13 +62,13 @@ async def judge_dpo_preference(
         'Respond with only a JSON object: {"score_a": <0-10>, "score_b": <0-10>}'
     )
     response = await judge.generate(
-        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}),
+        GenerationRequest(messages=[{"role": "user", "content": prompt}]),
         consent=consent,
     )
     try:
-        data = json.loads(response.content)
+        data = extract_json_object(response.content)
         score_a = float(data["score_a"])
         score_b = float(data["score_b"])
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+    except (ValueError, KeyError, TypeError) as exc:
         raise JudgingError(f"judge response was not valid: {exc}") from exc
     return (score_a - score_b) >= margin

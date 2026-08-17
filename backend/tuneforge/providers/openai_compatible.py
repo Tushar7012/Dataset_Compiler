@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 import uuid
 
 import httpx
@@ -30,6 +32,26 @@ class ProviderResponseError(RuntimeError):
 
 class RemoteConsentRequiredError(RuntimeError):
     pass
+
+
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def extract_json_object(text: str) -> dict:
+    """Parse a JSON object out of a judge model's free-form response.
+
+    Not every judge model supports response_format=json_object (HF router rejects
+    it outright for some), and "thinking" models wrap their real answer in a
+    <think>...</think> reasoning block regardless. Strip that block, then pull the
+    first {...} span out of what remains instead of assuming the whole response is
+    bare JSON.
+    """
+    cleaned = _THINK_BLOCK_RE.sub("", text).strip()
+    match = _JSON_OBJECT_RE.search(cleaned)
+    if not match:
+        raise ValueError(f"no JSON object found in response: {text!r}")
+    return json.loads(match.group(0))
 
 
 class OpenAICompatibleProvider:

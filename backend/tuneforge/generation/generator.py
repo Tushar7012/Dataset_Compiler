@@ -5,7 +5,7 @@ import logging
 
 from tuneforge.generation.specs import GenerationSpec
 from tuneforge.planning.schemas import TrainingPlan
-from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
+from tuneforge.providers.openai_compatible import OpenAICompatibleProvider, extract_json_object
 from tuneforge.providers.protocol import GenerationRequest, RunConsent
 from tuneforge.records import (
     ChatMessage,
@@ -133,13 +133,13 @@ async def _score_candidate(
         'Respond with only a JSON object: {"score": <number 0-10>}'
     )
     response = await judge.generate(
-        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}),
+        GenerationRequest(messages=[{"role": "user", "content": prompt}]),
         consent=consent,
     )
     try:
-        data = json.loads(response.content)
+        data = extract_json_object(response.content)
         return float(data["score"])
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+    except (ValueError, KeyError, TypeError) as exc:
         raise MalformedGenerationError(f"judge response was not a valid score: {exc}") from exc
 
 
