@@ -144,3 +144,27 @@ def test_plan_hash_changes_when_target_rows_changes():
     plan_a = recommend_plan(intent, profile, target_rows=1000)
     plan_b = recommend_plan(intent, profile, target_rows=2000)
     assert plan_a.plan_hash != plan_b.plan_hash
+
+
+def test_cpt_forces_examples_per_chunk_to_one():
+    # CPT's generation step is a deterministic passthrough of the source
+    # text (no LLM call) — requesting N copies of the same chunk would just
+    # be duplicate rows the dedup validator strips right back out.
+    plan = recommend_plan(
+        _intent("domain_adaptation"),
+        _model_profile(chat_template_found=False),
+        target_rows=1000,
+        examples_per_chunk=5,
+    )
+    assert plan.objective == "cpt"
+    assert plan.examples_per_chunk == 1
+
+
+def test_sft_preserves_requested_examples_per_chunk():
+    plan = recommend_plan(
+        _intent("single_turn_instruction"),
+        _model_profile(chat_template_found=False),
+        target_rows=1000,
+        examples_per_chunk=3,
+    )
+    assert plan.examples_per_chunk == 3

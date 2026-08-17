@@ -61,6 +61,21 @@ def _cpt_plan() -> TrainingPlan:
     )
 
 
+def _sft_plan(examples_per_chunk: int = 1) -> TrainingPlan:
+    return TrainingPlan(
+        objective="sft_prompt_completion",
+        canonical_schema="SFTPromptCompletionRecord",
+        target_rows=1000,
+        examples_per_chunk=examples_per_chunk,
+        generator_profile_id=None,
+        judge_profile_id=None,
+        required_validators=["structural", "deduplication", "source_grounding"],
+        evidence=[],
+        confidence=0.9,
+        plan_hash="hash-sft",
+    )
+
+
 @pytest.fixture
 def env(tmp_path: Path):
     engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
@@ -213,6 +228,66 @@ async def test_cancel_requested_stops_the_run_gracefully(env):
     session.refresh(run)
     assert run.status == "cancelled"
     assert run.completed_rows == 0
+
+
+async def test_examples_per_chunk_generates_multiple_records_per_chunk(env):
+    session, artifact_store, project, run = env
+    sources = _sources(uuid.uuid4(), 1)  # one chunk
+
+    answers = iter(
+        [
+            {"question": "How many vacation days?", "answer": "The policy grants twenty days.", "supporting_quote": "Fact number 0 about the source document."},
+            {"question": "What does the policy cover?", "answer": "It covers remote work and equipment.", "supporting_quote": "Fact number 0 about the source document."},
+            {"question": "Who approves exceptions?", "answer": "The department head approves exceptions.", "supporting_quote": "Fact number 0 about the source document."},
+        ]
+    )
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(next(answers))}}]})
+
+    generator = _provider(handler)
+
+    await _run_generation_async(
+        session=session, run=run, plan=_sft_plan(examples_per_chunk=3), sources=sources,
+        generator=generator, judge=None, spec=GenerationSpec(desired_behavior="sft"),
+        tokenizer=_FakeTokenizer(), max_tokens=512, target_rows=1000, resume_from_chunk=0,
+        output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
+    )
+
+    session.refresh(run)
+    assert run.completed_rows == 3
+    output_lines = run_output_path(artifact_store.base_dir, project.id, run.id).read_text().strip().splitlines()
+    assert len(output_lines) == 3
+
+
+async def test_examples_per_chunk_is_capped_at_target_rows(env):
+    session, artifact_store, project, run = env
+    sources = _sources(uuid.uuid4(), 1)  # one chunk, but examples_per_chunk=3 would overshoot target_rows=2
+
+    answers = iter(
+        [
+            {"question": "How many vacation days?", "answer": "The policy grants twenty days.", "supporting_quote": "Fact number 0 about the source document."},
+            {"question": "What does the policy cover?", "answer": "It covers remote work and equipment.", "supporting_quote": "Fact number 0 about the source document."},
+            {"question": "Who approves exceptions?", "answer": "The department head approves exceptions.", "supporting_quote": "Fact number 0 about the source document."},
+        ]
+    )
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(next(answers))}}]})
+
+    generator = _provider(handler)
+
+    await _run_generation_async(
+        session=session, run=run, plan=_sft_plan(examples_per_chunk=3), sources=sources,
+        generator=generator, judge=None, spec=GenerationSpec(desired_behavior="sft"),
+        tokenizer=_FakeTokenizer(), max_tokens=512, target_rows=2, resume_from_chunk=0,
+        output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
+    )
+
+    session.refresh(run)
+    assert run.completed_rows == 2
+    output_lines = run_output_path(artifact_store.base_dir, project.id, run.id).read_text().strip().splitlines()
+    assert len(output_lines) == 2
 
 
 async def test_run_forwards_consent_to_generate_record(env, monkeypatch):

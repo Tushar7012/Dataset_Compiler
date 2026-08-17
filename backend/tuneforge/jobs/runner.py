@@ -95,21 +95,29 @@ async def _run_generation_async(
                 logger.info("run %s cancelled after %d chunks", run.id, chunks_processed)
                 return
 
-            record = await generate_record(
-                plan=plan, source=source, generator=generator, judge=judge, spec=spec, consent=consent
-            )
+            generated_records = []
+            for _ in range(plan.examples_per_chunk):
+                record = await generate_record(
+                    plan=plan, source=source, generator=generator, judge=judge, spec=spec, consent=consent
+                )
+                if record is not None:
+                    generated_records.append(record)
             chunks_processed += 1
 
-            if record is not None:
+            if generated_records:
                 report = await run_validation_pipeline(
-                    [record], tokenizer=tokenizer, max_tokens=max_tokens, judge=judge
+                    generated_records, tokenizer=tokenizer, max_tokens=max_tokens, judge=judge
                 )
-                for accepted_record in report.accepted:
+                # examples_per_chunk can produce more accepted rows than one
+                # chunk's fair share of what's left — never write past target_rows.
+                remaining_capacity = max(0, min(target_rows, MAX_ACCEPTED_ROWS) - accepted_total)
+                accepted_to_write = report.accepted[:remaining_capacity]
+                for accepted_record in accepted_to_write:
                     output_file.write(accepted_record.model_dump_json())
                     output_file.write("\n")
                     output_file.flush()
-                accepted_total += len(report.accepted)
-                accepted_since_checkpoint += len(report.accepted)
+                accepted_total += len(accepted_to_write)
+                accepted_since_checkpoint += len(accepted_to_write)
 
             is_last_overall = index == len(remaining_sources) - 1
             is_document_boundary = not is_last_overall and remaining_sources[index + 1].document_id != source.document_id

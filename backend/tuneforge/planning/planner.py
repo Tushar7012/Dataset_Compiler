@@ -87,6 +87,12 @@ def recommend_plan(
     """
     objective = objective_override or OBJECTIVE_BY_GOAL[intent.goal]
 
+    # cpt's generation step is a deterministic passthrough of the source
+    # chunk (no LLM call) — N copies of the same chunk would just be
+    # duplicate rows the dedup validator strips right back out.
+    if objective == "cpt":
+        examples_per_chunk = 1
+
     if objective in CHAT_TEMPLATE_REQUIRED_OBJECTIVES and not model_profile.chat_template_found:
         raise ChatTemplateRequiredError(
             f"{model_profile.model_id} has no chat template, which {objective!r} requires"
