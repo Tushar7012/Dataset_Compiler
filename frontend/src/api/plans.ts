@@ -1,5 +1,11 @@
 import { apiFetch } from './client'
-import type { PlanApproval, RowEstimateResponse, TrainingIntentInput, TrainingPlanResponse } from './types'
+import type {
+  GoalSuggestionResponse,
+  PlanApproval,
+  RowEstimateResponse,
+  TrainingIntentInput,
+  TrainingPlanResponse,
+} from './types'
 
 export function recommendPlan(
   projectId: string,
@@ -30,4 +36,11 @@ export function estimateRows(projectId: string, modelProfileId: string): Promise
   return apiFetch<RowEstimateResponse>(
     `/api/plans/estimated-rows?project_id=${projectId}&model_profile_id=${modelProfileId}`,
   )
+}
+
+export function suggestGoal(projectId: string): Promise<GoalSuggestionResponse> {
+  return apiFetch<GoalSuggestionResponse>('/api/plans/suggest-goal', {
+    method: 'POST',
+    json: { project_id: projectId, remote_consent: true },
+  })
 }

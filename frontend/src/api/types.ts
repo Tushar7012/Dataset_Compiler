@@ -139,3 +139,9 @@ export interface RowEstimateResponse {
   truncated: boolean
   capped_at: number
 }
+
+export interface GoalSuggestionResponse {
+  goal: TrainingGoal
+  rationale: string
+  desired_behavior: string
+}
