@@ -6,9 +6,18 @@ from pathlib import Path
 import docling
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.settings import settings as docling_settings
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.exceptions import ConversionError, SecurityError
 from docling_core.types.doc.document import DoclingDocument
+
+# Docling's PDF layout model defaults to torch.compile()-ing itself for
+# speed — that needs an MSVC C++ compiler (cl.exe), which a stock Windows
+# install has no reason to have (this app's own tooling is uv/Python only).
+# Without it, conversion crashes with InvalidCxxCompiler instead of just
+# falling back to eager execution. Eager inference is correct either way,
+# just not JIT-optimized — worth it to make PDFs work out of the box.
+docling_settings.inference.compile_torch_models = False
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".html", ".htm", ".md", ".txt"}
 # Shared with tuneforge.api.projects.upload_source, which enforces this same

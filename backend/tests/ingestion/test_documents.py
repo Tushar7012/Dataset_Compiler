@@ -25,6 +25,19 @@ class _FakeConverter:
         return type("Result", (), {"document": self._document})()
 
 
+def test_disables_torch_compile_for_docling_pdf_layout_model():
+    # Docling's PDF layout model defaults to torch.compile()-ing itself,
+    # which needs an MSVC C++ compiler (cl.exe) — absent on a stock Windows
+    # install with no Visual Studio Build Tools. Found via a real 40-page
+    # PDF during a manual E2E pass: conversion crashed with
+    # docling.exceptions.ConversionError wrapping
+    # torch._inductor.exc.InductorError: InvalidCxxCompiler. Eager
+    # (uncompiled) inference is correct either way, just not JIT-optimized.
+    from docling.datamodel.settings import settings as docling_settings
+
+    assert docling_settings.inference.compile_torch_models is False
+
+
 def test_rejects_unsupported_extension(tmp_path):
     path = tmp_path / "data.xyz"
     path.write_text("hello")
