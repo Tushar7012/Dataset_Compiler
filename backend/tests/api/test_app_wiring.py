@@ -13,6 +13,7 @@ def test_all_routers_are_mounted(tmp_path, monkeypatch):
     assert "/api/models/analyze" in paths
     assert "/api/plans/recommend" in paths
     assert "/api/plans/estimated-rows" in paths
+    assert "/api/plans/suggest-goal" in paths
     assert "/api/providers" in paths
     assert "/api/runs/preview" in paths
     assert "/api/runs/{run_id}/export" in paths

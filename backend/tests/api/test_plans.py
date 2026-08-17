@@ -136,6 +136,127 @@ def test_estimated_rows_for_unknown_model_profile_returns_404(client):
     assert response.status_code == 404
 
 
+def _upload_doc_source(client, project_id, tmp_path, text="# HR Policy\n\nThis handbook covers leave and conduct.\n"):
+    from tuneforge.storage.repositories import SourceRepository
+
+    session = client.session_factory()
+    doc_path = tmp_path / "policy.md"
+    doc_path.write_text(text)
+    SourceRepository(session, client.artifact_store).add_source(project_id, doc_path)
+
+
+def _gemini_test_provider(handler):
+    import httpx
+
+    from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
+    from tuneforge.providers.protocol import ProviderProfile
+
+    transport = httpx.MockTransport(handler)
+    base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+    provider_client = httpx.AsyncClient(transport=transport, base_url=base_url)
+    profile = ProviderProfile(
+        name="gemini-goal-suggestion", base_url=base_url, model="gemini-2.5-flash",
+        endpoint_scope="remote", credential_reference="gemini",
+    )
+    return OpenAICompatibleProvider(profile, provider_client)
+
+
+def test_suggest_goal_requires_remote_consent(client):
+    project_id = _project_id(client)
+    response = client.post("/api/plans/suggest-goal", json={"project_id": str(project_id)})
+    assert response.status_code == 422
+    assert "remote_consent" in response.json()["detail"]
+
+
+def test_suggest_goal_returns_422_when_no_document_source_uploaded(client):
+    project_id = _project_id(client)
+    response = client.post(
+        "/api/plans/suggest-goal", json={"project_id": str(project_id), "remote_consent": True}
+    )
+    assert response.status_code == 422
+    assert "document source" in response.json()["detail"]
+
+
+def test_suggest_goal_returns_422_when_gemini_credential_missing(client, monkeypatch, tmp_path):
+    from tuneforge.security.credentials import CredentialNotFoundError
+
+    def _raise(ref):
+        raise CredentialNotFoundError(f"no credential stored for provider: {ref}")
+
+    monkeypatch.setattr("tuneforge.providers.openai_compatible.get_api_key", _raise)
+    project_id = _project_id(client)
+    _upload_doc_source(client, project_id, tmp_path)
+
+    response = client.post(
+        "/api/plans/suggest-goal", json={"project_id": str(project_id), "remote_consent": True}
+    )
+    assert response.status_code == 422
+    assert "credential" in response.json()["detail"].lower()
+
+
+def test_suggest_goal_returns_the_parsed_suggestion_on_success(client, monkeypatch, tmp_path):
+    import httpx
+
+    monkeypatch.setattr("tuneforge.providers.openai_compatible.get_api_key", lambda ref: "fake-key")
+    project_id = _project_id(client)
+    _upload_doc_source(client, project_id, tmp_path)
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({
+            "goal": "domain_adaptation",
+            "rationale": "The document is an HR policy handbook.",
+            "desired_behavior": "Answer questions about HR policy accurately.",
+        })}}]})
+
+    monkeypatch.setattr("tuneforge.api.plans._gemini_provider", lambda: _gemini_test_provider(handler))
+
+    response = client.post(
+        "/api/plans/suggest-goal", json={"project_id": str(project_id), "remote_consent": True}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["goal"] == "domain_adaptation"
+    assert body["desired_behavior"] == "Answer questions about HR policy accurately."
+
+
+def test_suggest_goal_returns_502_when_gemini_suggests_an_invalid_goal(client, monkeypatch, tmp_path):
+    import httpx
+
+    monkeypatch.setattr("tuneforge.providers.openai_compatible.get_api_key", lambda ref: "fake-key")
+    project_id = _project_id(client)
+    _upload_doc_source(client, project_id, tmp_path)
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content":
+            '{"goal": "not_a_real_goal", "rationale": "x", "desired_behavior": "y"}'
+        }}]})
+
+    monkeypatch.setattr("tuneforge.api.plans._gemini_provider", lambda: _gemini_test_provider(handler))
+
+    response = client.post(
+        "/api/plans/suggest-goal", json={"project_id": str(project_id), "remote_consent": True}
+    )
+    assert response.status_code == 502
+
+
+def test_suggest_goal_returns_502_on_malformed_json_response(client, monkeypatch, tmp_path):
+    import httpx
+
+    monkeypatch.setattr("tuneforge.providers.openai_compatible.get_api_key", lambda ref: "fake-key")
+    project_id = _project_id(client)
+    _upload_doc_source(client, project_id, tmp_path)
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": "not json at all"}}]})
+
+    monkeypatch.setattr("tuneforge.api.plans._gemini_provider", lambda: _gemini_test_provider(handler))
+
+    response = client.post(
+        "/api/plans/suggest-goal", json={"project_id": str(project_id), "remote_consent": True}
+    )
+    assert response.status_code == 502
+
+
 def test_approve_sets_approved_at(client):
     project_id = _project_id(client)
     model_profile_record = _stored_model_profile(client, project_id)

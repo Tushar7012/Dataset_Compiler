@@ -4,17 +4,93 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from tuneforge.api.deps import get_artifact_store, get_session
+from tuneforge.api.providers import GEMINI_API_KEY_CREDENTIAL_NAME
 from tuneforge.models.analyzer import ModelProfile
 from tuneforge.planning.intents import TrainingIntent
-from tuneforge.planning.planner import ChatTemplateRequiredError, DistinctJudgeRequiredError, recommend_plan
+from tuneforge.planning.planner import (
+    ChatTemplateRequiredError,
+    DistinctJudgeRequiredError,
+    OBJECTIVE_BY_GOAL,
+    recommend_plan,
+)
+from tuneforge.providers.openai_compatible import OpenAICompatibleProvider, ProviderAuthError, ProviderResponseError
+from tuneforge.providers.protocol import GenerationRequest, ProviderProfile, RunConsent
+from tuneforge.security.credentials import CredentialNotFoundError
 from tuneforge.storage.artifacts import ArtifactStore
 from tuneforge.storage.models import ModelProfileRecord, TrainingPlanRecord
 
 router = APIRouter()
+
+_SUGGEST_GOAL_CONSENT_ERROR = "remote provider requires explicit consent — set 'remote_consent': true"
+_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+_GEMINI_GOAL_SUGGESTION_MODEL = "gemini-2.5-flash"
+# ~2k tokens — enough for a coarse 1-of-4 classification from a document's
+# opening content, without transmitting the whole document to a remote API.
+_GOAL_SUGGESTION_CHAR_BUDGET = 8_000
+_VALID_GOALS = frozenset(OBJECTIVE_BY_GOAL)
+
+
+class GoalSuggestionError(RuntimeError):
+    pass
+
+
+def _sample_project_text(session, artifact_store, project_id: uuid.UUID) -> str:
+    from tuneforge.ingestion.documents import convert_document_cached
+    from tuneforge.storage.repositories import SourceRepository
+
+    source_repo = SourceRepository(session, artifact_store)
+    cache_dir = artifact_store.base_dir / "_docling_cache"  # same cache _load_project_sources uses
+    chunks: list[str] = []
+    budget = _GOAL_SUGGESTION_CHAR_BUDGET
+    for source_row in source_repo.list_sources(project_id):
+        if source_row.confirmed_schema is not None or budget <= 0:
+            continue
+        document, _ = convert_document_cached(source_repo.get_source_path(source_row), cache_dir=cache_dir)
+        text = document.export_to_markdown()[:budget]
+        chunks.append(text)
+        budget -= len(text)
+    return "\n\n---\n\n".join(chunks)
+
+
+def _gemini_provider() -> OpenAICompatibleProvider:
+    profile = ProviderProfile(
+        name="gemini-goal-suggestion",
+        base_url=_GEMINI_BASE_URL,
+        model=_GEMINI_GOAL_SUGGESTION_MODEL,
+        endpoint_scope="remote",
+        credential_reference=GEMINI_API_KEY_CREDENTIAL_NAME,
+    )
+    client = httpx.AsyncClient(base_url=profile.base_url, timeout=profile.timeout_seconds)
+    return OpenAICompatibleProvider(profile, client)
+
+
+async def _suggest_goal_from_text(provider: OpenAICompatibleProvider, text: str, consent: RunConsent) -> dict:
+    prompt = (
+        "You are classifying a document to choose the best fine-tuning goal.\n"
+        f"Pick exactly one goal from this list: {sorted(_VALID_GOALS)}.\n\n"
+        f"DOCUMENT SAMPLE:\n{text}\n\n"
+        'Respond with only a JSON object: {"goal": "<one of the list above>", '
+        '"rationale": "<one sentence>", "desired_behavior": "<one sentence>"}'
+    )
+    response = await provider.generate(
+        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}),
+        consent=consent,
+    )
+    try:
+        data = json.loads(response.content)
+        goal = data["goal"]
+        rationale = str(data["rationale"])
+        desired_behavior = str(data["desired_behavior"])
+        if not isinstance(goal, str) or goal not in _VALID_GOALS:
+            raise GoalSuggestionError(f"Gemini suggested an unrecognized goal: {goal!r}")
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise GoalSuggestionError(f"Gemini response was not valid JSON with the expected fields: {exc}") from exc
+    return {"goal": goal, "rationale": rationale, "desired_behavior": desired_behavior}
 
 
 @router.post("/plans/recommend")
@@ -77,6 +153,53 @@ async def estimated_rows(
     tokenizer = build_tokenizer(model_profile.model_id)
     estimate = estimate_total_rows(session, artifact_store, project_id, tokenizer)
     return {"total_rows": estimate.total_rows, "truncated": estimate.truncated, "capped_at": estimate.capped_at}
+
+
+@router.post("/plans/suggest-goal")
+async def suggest_goal(
+    payload: dict,
+    session: Session = Depends(get_session),
+    artifact_store: ArtifactStore = Depends(get_artifact_store),
+):
+    if not payload.get("remote_consent"):
+        raise HTTPException(status_code=422, detail=_SUGGEST_GOAL_CONSENT_ERROR)
+    if not payload.get("project_id"):
+        raise HTTPException(status_code=422, detail="'project_id' is required")
+
+    project_id = uuid.UUID(payload["project_id"])
+
+    from tuneforge.ingestion.documents import (
+        CorruptDocumentError,
+        EmptyDocumentError,
+        EncryptedDocumentError,
+        OversizedDocumentError,
+        UnsupportedDocumentError,
+    )
+
+    try:
+        text_sample = _sample_project_text(session, artifact_store, project_id)
+    except (
+        UnsupportedDocumentError,
+        EmptyDocumentError,
+        OversizedDocumentError,
+        EncryptedDocumentError,
+        CorruptDocumentError,
+    ) as exc:
+        raise HTTPException(status_code=422, detail=f"could not read project document source(s): {exc}") from exc
+
+    if not text_sample:
+        raise HTTPException(
+            status_code=422, detail="no document source available to sample — upload a document source first"
+        )
+
+    consent = RunConsent(run_id=uuid.uuid4(), granted_at=datetime.now(timezone.utc))
+    provider = _gemini_provider()
+    try:
+        return await _suggest_goal_from_text(provider, text_sample, consent)
+    except CredentialNotFoundError as exc:
+        raise HTTPException(status_code=422, detail=f"Gemini credential not configured: {exc}") from exc
+    except (ProviderAuthError, ProviderResponseError, GoalSuggestionError) as exc:
+        raise HTTPException(status_code=502, detail=f"goal suggestion failed: {exc}") from exc
 
 
 @router.post("/plans/{plan_id}/approve")
