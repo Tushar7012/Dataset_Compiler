@@ -124,3 +124,15 @@ def test_preserves_original_row_id_and_source_metadata():
     )
     assert record.metadata.row_id == "42"
     assert record.metadata.source_name == "data.jsonl"
+
+
+def test_normalized_records_are_tagged_structured_source_kind():
+    [record] = normalize_rows([_row({"text": "hello"})], DetectedSchema.TEXT, document_id=uuid.uuid4())
+    assert record.metadata.source_kind == "structured"
+
+
+def test_canonical_schema_by_detected_schema_matches_each_normalizer_output_type():
+    from tuneforge.normalization.mappers import CANONICAL_SCHEMA_BY_DETECTED_SCHEMA, NORMALIZERS
+
+    for schema, normalizer in NORMALIZERS.items():
+        assert CANONICAL_SCHEMA_BY_DETECTED_SCHEMA[schema] == normalizer.__annotations__["return"]

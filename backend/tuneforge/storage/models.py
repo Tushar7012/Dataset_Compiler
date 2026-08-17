@@ -35,6 +35,11 @@ class Source(Base):
     source_hash: Mapped[str] = mapped_column(index=True)
     relative_path: Mapped[str] = mapped_column()
     size_bytes: Mapped[int] = mapped_column()
+    # Set once the column-mapping wizard step confirms this source loads as
+    # structured rows — confirmed_schema is a DetectedSchema value, column_mapping
+    # a JSON-encoded {actual_column: canonical_field} dict (None when auto-detected).
+    confirmed_schema: Mapped[str | None] = mapped_column(default=None)
+    column_mapping: Mapped[str | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
@@ -87,6 +92,14 @@ class RunRecord(Base):
     status: Mapped[str] = mapped_column(default="pending")
     total_rows: Mapped[int] = mapped_column(default=0)
     completed_rows: Mapped[int] = mapped_column(default=0)
+    # total_rows/completed_rows are the combined total; these two break it down
+    # by where the row came from once structured sources merge into a run.
+    accepted_generated: Mapped[int] = mapped_column(default=0)
+    accepted_normalized: Mapped[int] = mapped_column(default=0)
+    # JSON-encoded list of {"source_id": ..., "reason": ...} for structured
+    # sources whose detected schema didn't match the plan's objective and so
+    # were left out of this run rather than silently mixed in.
+    structured_sources_skipped: Mapped[str | None] = mapped_column(default=None)
     assurance_level: Mapped[str | None] = mapped_column(default=None)
     remote_consent_granted_at: Mapped[datetime | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)

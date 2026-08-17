@@ -23,6 +23,7 @@ class RecordMetadata(BaseModel):
     source_hash: str
     chunk_id: str | None = None
     row_id: str | None = None
+    source_kind: Literal["document", "structured"] = "document"
     extra: dict[str, JsonValue] = Field(default_factory=dict)
 
 

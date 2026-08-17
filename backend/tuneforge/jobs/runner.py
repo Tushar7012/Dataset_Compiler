@@ -147,6 +147,13 @@ def _load_project_sources(session, artifact_store, project_id: uuid.UUID, tokeni
 
     all_sources: list[SourceRecord] = []
     for source_row in source_repo.list_sources(project_id):
+        # Sources with a confirmed structured mapping are handled by
+        # _load_structured_records instead — running them through document
+        # conversion here is what used to crash the worker (UnsupportedDocumentError
+        # on a .csv/.json source, raised before this function even had a chance
+        # to be resumable, let alone caught).
+        if source_row.confirmed_schema is not None:
+            continue
         file_path = source_repo.get_source_path(source_row)
         document, source_hash = convert_document_cached(file_path, cache_dir=cache_dir)
         document_id = uuid.uuid4()
@@ -159,6 +166,50 @@ def _load_project_sources(session, artifact_store, project_id: uuid.UUID, tokeni
         )
         all_sources.extend(chunks)
     return all_sources
+
+
+def _load_structured_records(
+    session, artifact_store, project_id: uuid.UUID, plan: TrainingPlan
+) -> tuple[list, list[dict]]:
+    """Normalizes every source with a confirmed column mapping, skipping any
+    whose detected schema doesn't produce the plan's canonical record type —
+    never silently mixes e.g. CPT generation with SFT-shaped structured rows.
+    Returns (records, skipped) where skipped is [{"source_id", "reason"}, ...].
+    """
+    from tuneforge.ingestion.structured import load_structured_rows
+    from tuneforge.normalization.detector import DetectedSchema
+    from tuneforge.normalization.mappers import CANONICAL_SCHEMA_BY_DETECTED_SCHEMA, normalize_rows
+    from tuneforge.normalization.preview import apply_column_mapping
+    from tuneforge.storage.repositories import SourceRepository
+
+    source_repo = SourceRepository(session, artifact_store)
+
+    records: list = []
+    skipped: list[dict] = []
+    for source_row in source_repo.list_sources(project_id):
+        if source_row.confirmed_schema is None:
+            continue
+
+        schema = DetectedSchema(source_row.confirmed_schema)
+        canonical_schema = CANONICAL_SCHEMA_BY_DETECTED_SCHEMA[schema]
+        if canonical_schema != plan.canonical_schema:
+            skipped.append(
+                {
+                    "source_id": str(source_row.id),
+                    "reason": (
+                        f"detected schema {schema.value!r} ({canonical_schema}) does not match "
+                        f"the plan's objective ({plan.canonical_schema})"
+                    ),
+                }
+            )
+            continue
+
+        rows = load_structured_rows(source_repo.get_source_path(source_row))
+        if source_row.column_mapping:
+            rows = apply_column_mapping(rows, json.loads(source_row.column_mapping))
+        records.extend(normalize_rows(rows, schema, document_id=source_row.id))
+
+    return records, skipped
 
 
 def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> None:
@@ -184,43 +235,48 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
     generator = _load_provider(session, run.generator_profile_id)
     judge = _load_provider(session, run.judge_profile_id) if run.judge_profile_id else None
 
-    # TrainingPlan has no model_id field of its own — the analyzed model
-    # profile lives on ModelProfileRecord, keyed by project, not by plan.
-    # Reuse the same "most recent analysis for this project" lookup
-    # api/exports.py already relies on, rather than re-analyzing from a
-    # plan_json key that was never actually populated.
-    model_profile_record = (
-        session.query(ModelProfileRecord)
-        .filter(ModelProfileRecord.project_id == run.project_id)
-        .order_by(ModelProfileRecord.created_at.desc())
-        .first()
-    )
-    if model_profile_record is None:
-        raise RuntimeError(f"no analyzed model found for project {run.project_id}")
-    model_profile = ModelProfile.model_validate(model_profile_record.profile_json)
-    tokenizer = build_tokenizer(model_profile.model_id)
-    sources = _load_project_sources(session, artifact_store, run.project_id, tokenizer)
-
-    from tuneforge.storage.models import CheckpointRecord
-
-    latest = (
-        session.query(CheckpointRecord)
-        .filter(CheckpointRecord.run_id == run.id)
-        .order_by(CheckpointRecord.sequence.desc())
-        .first()
-    )
-    resume_from_chunk = latest.sequence if latest else 0
-
-    target_rows = 20 if run.is_preview else plan.target_rows
-    output_path = run_output_path(artifact_store.base_dir, run.project_id, run.id)
-
-    consent = (
-        RunConsent(run_id=run.id, granted_at=run.remote_consent_granted_at)
-        if run.remote_consent_granted_at
-        else None
-    )
-
     try:
+        # TrainingPlan has no model_id field of its own — the analyzed model
+        # profile lives on ModelProfileRecord, keyed by project, not by plan.
+        # Reuse the same "most recent analysis for this project" lookup
+        # api/exports.py already relies on, rather than re-analyzing from a
+        # plan_json key that was never actually populated.
+        model_profile_record = (
+            session.query(ModelProfileRecord)
+            .filter(ModelProfileRecord.project_id == run.project_id)
+            .order_by(ModelProfileRecord.created_at.desc())
+            .first()
+        )
+        if model_profile_record is None:
+            raise RuntimeError(f"no analyzed model found for project {run.project_id}")
+        model_profile = ModelProfile.model_validate(model_profile_record.profile_json)
+        tokenizer = build_tokenizer(model_profile.model_id)
+        # Everything from here through the structured-record merge below used to
+        # sit outside this try block — an UnsupportedDocumentError from a
+        # structured source that slipped past _load_project_sources's filter (or
+        # any other loading failure) would kill the worker without ever setting
+        # run.status to "failed", leaving the run stuck. See CLAUDE.md's known gaps.
+        sources = _load_project_sources(session, artifact_store, run.project_id, tokenizer)
+
+        from tuneforge.storage.models import CheckpointRecord
+
+        latest = (
+            session.query(CheckpointRecord)
+            .filter(CheckpointRecord.run_id == run.id)
+            .order_by(CheckpointRecord.sequence.desc())
+            .first()
+        )
+        resume_from_chunk = latest.sequence if latest else 0
+
+        target_rows = 20 if run.is_preview else plan.target_rows
+        output_path = run_output_path(artifact_store.base_dir, run.project_id, run.id)
+
+        consent = (
+            RunConsent(run_id=run.id, granted_at=run.remote_consent_granted_at)
+            if run.remote_consent_granted_at
+            else None
+        )
+
         asyncio.run(
             _run_generation_async(
                 session=session,
@@ -238,6 +294,42 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
                 consent=consent,
             )
         )
+
+        # Only merge structured rows once the document phase actually finished —
+        # a cancelled/still-running run should not pick up a second row stream.
+        # Not itself checkpointed/resumable: a crash during this block, followed
+        # by some future re-invocation of this same completed run, could re-append
+        # the same normalized rows. No code path does that today (a run is only
+        # ever started once), so this is a known ceiling, not a bug being ignored.
+        if run.status == "completed":
+            structured_records, skipped = _load_structured_records(
+                session, artifact_store, run.project_id, plan
+            )
+            remaining_capacity = max(0, min(target_rows, MAX_ACCEPTED_ROWS) - run.completed_rows)
+            structured_records = structured_records[:remaining_capacity]
+
+            accepted_normalized = 0
+            if structured_records:
+                report = asyncio.run(
+                    run_validation_pipeline(
+                        structured_records,
+                        tokenizer=tokenizer.tokenizer,
+                        max_tokens=model_profile.context_length or 2048,
+                        judge=judge,
+                    )
+                )
+                with output_path.open("a", encoding="utf-8") as output_file:
+                    for accepted_record in report.accepted:
+                        output_file.write(accepted_record.model_dump_json())
+                        output_file.write("\n")
+                accepted_normalized = len(report.accepted)
+
+            run.accepted_generated = run.completed_rows
+            run.accepted_normalized = accepted_normalized
+            run.completed_rows = run.accepted_generated + accepted_normalized
+            run.total_rows = run.completed_rows
+            run.structured_sources_skipped = json.dumps(skipped) if skipped else None
+            session.commit()
     except Exception:
         logger.exception("run %s failed", run.id)
         run.status = "failed"

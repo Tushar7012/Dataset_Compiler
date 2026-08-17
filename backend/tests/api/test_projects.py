@@ -1,3 +1,5 @@
+import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -7,6 +9,7 @@ from fastapi.testclient import TestClient
 from tuneforge.api.projects import router
 from tuneforge.storage.artifacts import ArtifactStore
 from tuneforge.storage.db import create_session_factory, create_sqlite_engine
+from tuneforge.storage.models import Source
 
 
 @pytest.fixture
@@ -16,7 +19,9 @@ def client(tmp_path: Path):
     app.state.session_factory = create_session_factory(engine)
     app.state.artifact_store = ArtifactStore(tmp_path / "data")
     app.include_router(router, prefix="/api")
-    return TestClient(app)
+    test_client = TestClient(app)
+    test_client.session_factory = app.state.session_factory
+    return test_client
 
 
 def test_create_project_returns_the_new_project(client):
@@ -172,3 +177,51 @@ def test_normalize_preview_caps_at_20_rows_but_reports_the_real_total(client):
     body = response.json()
     assert len(body["preview"]) == 20
     assert body["total_rows"] == 30
+
+
+def test_confirm_mapping_with_detected_schema_persists_it_on_the_source(client):
+    project_id = client.post("/api/projects", json={"name": "proj"}).json()["id"]
+    source_id = _upload_csv(client, project_id, "prompt,completion\nHi,Hello there\n").json()["id"]
+
+    response = client.post(f"/api/projects/{project_id}/sources/{source_id}/confirm-mapping", json={})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_name"] == "prompt_completion"
+    assert body["total_rows"] == 1
+
+    session = client.session_factory()
+    stored = session.query(Source).filter(Source.id == uuid.UUID(source_id)).one()
+    assert stored.confirmed_schema == "prompt_completion"
+    assert stored.column_mapping is None
+
+
+def test_confirm_mapping_with_manual_mapping_persists_the_mapping(client):
+    project_id = client.post("/api/projects", json={"name": "proj"}).json()["id"]
+    source_id = _upload_csv(client, project_id, "question,answer\nHi,Hello there\n").json()["id"]
+
+    response = client.post(
+        f"/api/projects/{project_id}/sources/{source_id}/confirm-mapping",
+        json={"mapping": {"question": "prompt", "answer": "completion"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["schema_name"] == "prompt_completion"
+
+    session = client.session_factory()
+    stored = session.query(Source).filter(Source.id == uuid.UUID(source_id)).one()
+    assert stored.confirmed_schema == "prompt_completion"
+    assert json.loads(stored.column_mapping) == {"question": "prompt", "answer": "completion"}
+
+
+def test_confirm_mapping_without_mapping_when_inconclusive_returns_422(client):
+    project_id = client.post("/api/projects", json={"name": "proj"}).json()["id"]
+    source_id = _upload_csv(client, project_id, "col_a,col_b\nfoo,bar\n").json()["id"]
+
+    response = client.post(f"/api/projects/{project_id}/sources/{source_id}/confirm-mapping", json={})
+
+    assert response.status_code == 422
+
+    session = client.session_factory()
+    stored = session.query(Source).filter(Source.id == uuid.UUID(source_id)).one()
+    assert stored.confirmed_schema is None

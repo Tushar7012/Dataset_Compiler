@@ -26,6 +26,7 @@ def _metadata(row: StructuredRow, document_id: uuid.UUID) -> RecordMetadata:
         source_name=row.source_name,
         source_hash=row.source_hash,
         row_id=row.row_id,
+        source_kind="structured",
     )
 
 
@@ -115,6 +116,19 @@ NORMALIZERS = {
     DetectedSchema.MESSAGES: normalize_messages_row,
     DetectedSchema.CONVERSATIONS: normalize_conversations_row,
     DetectedSchema.PROMPT_CHOSEN_REJECTED: normalize_dpo_row,
+}
+
+# What canonical record class each detected schema normalizes to — the same
+# strings as planning.planner.CANONICAL_SCHEMA_BY_OBJECTIVE, so a run can check
+# "does this structured source's detected schema match the plan's objective"
+# before merging it in, instead of silently mixing incompatible record shapes.
+CANONICAL_SCHEMA_BY_DETECTED_SCHEMA: dict[DetectedSchema, str] = {
+    DetectedSchema.TEXT: "CPTRecord",
+    DetectedSchema.PROMPT_COMPLETION: "SFTPromptCompletionRecord",
+    DetectedSchema.INSTRUCTION_INPUT_OUTPUT: "SFTPromptCompletionRecord",
+    DetectedSchema.MESSAGES: "SFTConversationRecord",
+    DetectedSchema.CONVERSATIONS: "SFTConversationRecord",
+    DetectedSchema.PROMPT_CHOSEN_REJECTED: "DPORecord",
 }
 
 

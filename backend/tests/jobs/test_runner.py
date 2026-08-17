@@ -345,6 +345,181 @@ def test_worker_process_can_be_spawned_and_joins_cleanly(tmp_path):
     assert marker_path.read_text() == "ok"
 
 
+def test_load_project_sources_skips_confirmed_structured_sources(tmp_path):
+    from tuneforge.ingestion.chunking import build_tokenizer
+    from tuneforge.jobs.runner import _load_project_sources
+    from tuneforge.storage.repositories import SourceRepository
+
+    engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
+    session = create_session_factory(engine)()
+    artifact_store = ArtifactStore(tmp_path / "data")
+    project = ProjectRepository(session, artifact_store).create("proj")
+    source_repo = SourceRepository(session, artifact_store)
+
+    doc_path = tmp_path / "a.md"
+    doc_path.write_text("# Doc A\n\nDocument content.\n")
+    source_repo.add_source(project.id, doc_path)
+
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("prompt,completion\nHi,Hello\n")
+    csv_source = source_repo.add_source(project.id, csv_path)
+    csv_source.confirmed_schema = "prompt_completion"
+    session.commit()
+
+    tokenizer = build_tokenizer("gpt2", max_tokens=64)
+    sources = _load_project_sources(session, artifact_store, project.id, tokenizer)
+
+    assert len(sources) == 1
+    assert "Document content" in sources[0].text
+
+
+def _confirm_structured_source(session, source_repo, project_id, csv_path, schema_name: str, mapping: dict | None = None):
+    source = source_repo.add_source(project_id, csv_path)
+    source.confirmed_schema = schema_name
+    source.column_mapping = json.dumps(mapping) if mapping else None
+    session.commit()
+    return source
+
+
+async def test_load_structured_records_normalizes_sources_matching_the_plan_objective(tmp_path):
+    from tuneforge.jobs.runner import _load_structured_records
+    from tuneforge.storage.repositories import SourceRepository
+
+    engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
+    session = create_session_factory(engine)()
+    artifact_store = ArtifactStore(tmp_path / "data")
+    project = ProjectRepository(session, artifact_store).create("proj")
+    source_repo = SourceRepository(session, artifact_store)
+
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("prompt,completion\nHi,Hello there\n")
+    _confirm_structured_source(session, source_repo, project.id, csv_path, "prompt_completion")
+
+    plan = TrainingPlan(
+        objective="sft_prompt_completion", canonical_schema="SFTPromptCompletionRecord", target_rows=100,
+        examples_per_chunk=1, generator_profile_id=None, judge_profile_id=None,
+        required_validators=["structural"], evidence=[], confidence=0.9, plan_hash="h",
+    )
+
+    records, skipped = _load_structured_records(session, artifact_store, project.id, plan)
+
+    assert skipped == []
+    assert len(records) == 1
+    assert records[0].prompt == "Hi"
+    assert records[0].metadata.source_kind == "structured"
+
+
+async def test_load_structured_records_skips_sources_whose_schema_does_not_match_the_objective(tmp_path):
+    from tuneforge.jobs.runner import _load_structured_records
+    from tuneforge.storage.repositories import SourceRepository
+
+    engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
+    session = create_session_factory(engine)()
+    artifact_store = ArtifactStore(tmp_path / "data")
+    project = ProjectRepository(session, artifact_store).create("proj")
+    source_repo = SourceRepository(session, artifact_store)
+
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("prompt,completion\nHi,Hello there\n")
+    source = _confirm_structured_source(session, source_repo, project.id, csv_path, "prompt_completion")
+
+    records, skipped = _load_structured_records(session, artifact_store, project.id, _cpt_plan())
+
+    assert records == []
+    assert len(skipped) == 1
+    assert skipped[0]["source_id"] == str(source.id)
+
+
+async def test_load_structured_records_applies_the_stored_column_mapping(tmp_path):
+    from tuneforge.jobs.runner import _load_structured_records
+    from tuneforge.storage.repositories import SourceRepository
+
+    engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
+    session = create_session_factory(engine)()
+    artifact_store = ArtifactStore(tmp_path / "data")
+    project = ProjectRepository(session, artifact_store).create("proj")
+    source_repo = SourceRepository(session, artifact_store)
+
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("question,answer\nHi,Hello there\n")
+    _confirm_structured_source(
+        session, source_repo, project.id, csv_path, "prompt_completion",
+        mapping={"question": "prompt", "answer": "completion"},
+    )
+
+    plan = TrainingPlan(
+        objective="sft_prompt_completion", canonical_schema="SFTPromptCompletionRecord", target_rows=100,
+        examples_per_chunk=1, generator_profile_id=None, judge_profile_id=None,
+        required_validators=["structural"], evidence=[], confidence=0.9, plan_hash="h",
+    )
+
+    records, skipped = _load_structured_records(session, artifact_store, project.id, plan)
+
+    assert skipped == []
+    assert records[0].prompt == "Hi"
+    assert records[0].completion == "Hello there"
+
+
+def test_worker_merges_structured_records_into_a_completed_run(env, monkeypatch, tmp_path):
+    session, artifact_store, project, run = env
+    from tuneforge.storage.repositories import SourceRepository
+
+    source_repo = SourceRepository(session, artifact_store)
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("text\nStandalone fact.\n")
+    _confirm_structured_source(session, source_repo, project.id, csv_path, "text")
+
+    db_path = session.get_bind().url.database
+    session.close()
+
+    class _FakeTok:
+        tokenizer = _FakeTokenizer()
+
+    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
+    monkeypatch.setattr(
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+    )
+    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
+
+    run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
+
+    check_session = create_session_factory(create_sqlite_engine(Path(db_path)))()
+    stored = check_session.get(RunRecord, run.id)
+    assert stored.status == "completed"
+    assert stored.accepted_generated == 0
+    assert stored.accepted_normalized == 1
+    assert stored.completed_rows == 1
+    assert stored.total_rows == 1
+
+    output_lines = run_output_path(artifact_store.base_dir, project.id, run.id).read_text().strip().splitlines()
+    assert len(output_lines) == 1
+
+
+def test_worker_marks_run_failed_when_load_project_sources_raises(env, monkeypatch):
+    session, artifact_store, project, run = env
+    db_path = session.get_bind().url.database
+    session.close()
+
+    class _FakeTok:
+        tokenizer = object()
+
+    from tuneforge.ingestion.documents import UnsupportedDocumentError
+
+    def _raise(session, artifact_store, project_id, tokenizer):
+        raise UnsupportedDocumentError("data.csv: unsupported document format '.csv'")
+
+    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
+    monkeypatch.setattr("tuneforge.jobs.runner._load_project_sources", _raise)
+    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
+
+    with pytest.raises(UnsupportedDocumentError):
+        run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
+
+    check_session = create_session_factory(create_sqlite_engine(Path(db_path)))()
+    stored = check_session.get(RunRecord, run.id)
+    assert stored.status == "failed"
+
+
 def test_load_project_sources_chunks_every_document_source_in_order(tmp_path):
     from tuneforge.ingestion.chunking import build_tokenizer
     from tuneforge.jobs.runner import _load_project_sources

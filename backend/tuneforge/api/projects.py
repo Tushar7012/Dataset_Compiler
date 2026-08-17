@@ -149,3 +149,35 @@ async def normalize_source_preview(
         "preview": [json.loads(record.model_dump_json()) for record in preview_records],
         "total_rows": len(rows),
     }
+
+
+@router.post("/projects/{project_id}/sources/{source_id}/confirm-mapping")
+async def confirm_source_mapping(
+    project_id: uuid.UUID,
+    source_id: uuid.UUID,
+    payload: dict,
+    session: Session = Depends(get_session),
+    artifact_store: ArtifactStore = Depends(get_artifact_store),
+):
+    source = _get_source_or_404(session, project_id, source_id)
+    rows = _load_rows_or_422(artifact_store, source)
+
+    mapping = payload.get("mapping")
+    if mapping:
+        try:
+            rows = apply_column_mapping(rows, mapping)
+        except ColumnMappingError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    detection = detect_schema([row.data for row in rows])
+    if detection.schema_name is None:
+        raise HTTPException(
+            status_code=422,
+            detail="could not determine the training format for this file — provide a column mapping",
+        )
+
+    source.confirmed_schema = detection.schema_name.value
+    source.column_mapping = json.dumps(mapping) if mapping else None
+    session.commit()
+
+    return {"schema_name": detection.schema_name, "total_rows": len(rows)}
