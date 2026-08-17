@@ -243,15 +243,18 @@ async def research(plan_id: uuid.UUID, payload: dict, session: Session = Depends
     )
 
     async with httpx.AsyncClient() as client:
-        result = await resolve_rejected_recommendation(
-            intent,
-            model_profile,
-            client=client,
-            target_rows=payload["target_rows"],
-            objective_override=payload.get("objective_override"),
-            generator_profile_id=uuid.UUID(payload["generator_profile_id"]) if payload.get("generator_profile_id") else None,
-            judge_profile_id=uuid.UUID(payload["judge_profile_id"]) if payload.get("judge_profile_id") else None,
-        )
+        try:
+            result = await resolve_rejected_recommendation(
+                intent,
+                model_profile,
+                client=client,
+                target_rows=payload["target_rows"],
+                objective_override=payload.get("objective_override"),
+                generator_profile_id=uuid.UUID(payload["generator_profile_id"]) if payload.get("generator_profile_id") else None,
+                judge_profile_id=uuid.UUID(payload["judge_profile_id"]) if payload.get("judge_profile_id") else None,
+            )
+        except (ChatTemplateRequiredError, DistinctJudgeRequiredError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     if result.plan is None:
         return {

@@ -44,9 +44,8 @@ def _load_local_json(local_path: Path, filename: str) -> dict | None:
 
 
 def _hf_token() -> str | None:
-    # Stored the same way as provider API keys — Windows Credential Manager
-    # via tuneforge.security.credentials, never a .env file or config value.
-    # Absent is a normal state (public models need no token), not an error.
+    # Resolves via tuneforge.security.credentials — HF_TOKEN from repo-root .env
+    # first, then keyring fallback. Absent is normal for public models.
     try:
         return get_api_key(HF_TOKEN_CREDENTIAL_NAME)
     except CredentialNotFoundError:
