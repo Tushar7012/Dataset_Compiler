@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     port: int = 8420
     app_version: str = "0.1.0"
     data_dir: Path = Field(default_factory=_default_data_dir)
+    # Base URL of the DGX GPU docling-parsing service (e.g. "http://100.95.183.32:9100").
+    # None (default) means all document parsing stays local/CPU, as before this
+    # feature existed. See DGX_docling_plan.md.
+    docling_remote_url: str | None = None
 
 
 def generate_session_token() -> str:

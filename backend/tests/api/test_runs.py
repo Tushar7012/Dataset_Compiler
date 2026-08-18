@@ -386,6 +386,56 @@ def test_approve_full_accepts_remote_generator_with_consent_and_stores_the_times
     assert full_run.remote_consent_granted_at is not None
 
 
+def test_preview_requires_consent_when_remote_parsing_configured_even_with_local_providers(client):
+    from tuneforge.settings import Settings
+
+    client.app.state.settings = Settings(docling_remote_url="http://dgx:9000")
+    session = _session(client)
+    project = ProjectRepository(session, client.artifact_store).create("proj")
+    plan, local_provider = _make_plan_and_provider(client, project.id)
+
+    response = client.post(
+        "/api/runs/preview",
+        json={"plan_id": str(plan.id), "generator_profile_id": str(local_provider.id)},
+    )
+
+    assert response.status_code == 422
+    assert "consent" in response.json()["detail"].lower()
+
+
+def test_preview_accepts_local_providers_with_consent_when_remote_parsing_configured(client, monkeypatch):
+    from tuneforge.settings import Settings
+
+    monkeypatch.setattr("tuneforge.api.runs.start_run", lambda **kwargs: None)
+    client.app.state.settings = Settings(docling_remote_url="http://dgx:9000")
+    session = _session(client)
+    project = ProjectRepository(session, client.artifact_store).create("proj")
+    plan, local_provider = _make_plan_and_provider(client, project.id)
+
+    response = client.post(
+        "/api/runs/preview",
+        json={"plan_id": str(plan.id), "generator_profile_id": str(local_provider.id), "remote_consent": True},
+    )
+
+    assert response.status_code == 201
+    session = _session(client)
+    stored = session.get(RunRecord, uuid.UUID(response.json()["id"]))
+    assert stored.remote_consent_granted_at is not None
+
+
+def test_preview_does_not_require_consent_when_remote_parsing_not_configured(client):
+    session = _session(client)
+    project = ProjectRepository(session, client.artifact_store).create("proj")
+    plan, local_provider = _make_plan_and_provider(client, project.id)
+
+    response = client.post(
+        "/api/runs/preview",
+        json={"plan_id": str(plan.id), "generator_profile_id": str(local_provider.id)},
+    )
+
+    assert response.status_code == 201
+
+
 def test_list_run_records_returns_up_to_limit_accepted_rows(client):
     session = _session(client)
     project = ProjectRepository(session, client.artifact_store).create("proj")

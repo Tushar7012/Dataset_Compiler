@@ -35,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # before any provider has resolved them via get_api_key.
     register_redaction_token(lambda: os.environ.get("GEMINI_API_KEY"))
     register_redaction_token(lambda: os.environ.get("HF_TOKEN"))
+    register_redaction_token(lambda: os.environ.get("DGX_PARSER_TOKEN"))
     install_log_redaction()
 
     db_path = settings.data_dir / "tuneforge.db"

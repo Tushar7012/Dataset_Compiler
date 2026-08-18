@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 
 import docling
@@ -18,6 +19,8 @@ from docling_core.types.doc.document import DoclingDocument
 # falling back to eager execution. Eager inference is correct either way,
 # just not JIT-optimized — worth it to make PDFs work out of the box.
 docling_settings.inference.compile_torch_models = False
+
+logger = logging.getLogger("tuneforge.ingestion")
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".html", ".htm", ".md", ".txt"}
 # Shared with tuneforge.api.projects.upload_source, which enforces this same
@@ -93,18 +96,67 @@ def convert_document_cached(
     *,
     cache_dir: Path,
     converter: DocumentConverter | None = None,
+    remote_parser_url: str | None = None,
+    remote_parser_token: str | None = None,
 ) -> tuple[DoclingDocument, str]:
     """Same as convert_document, but skips re-parsing (the expensive part,
     especially with OCR) if this exact file was already parsed by this
     exact docling version. Returns (document, source_hash) since callers
     need the hash anyway for the resulting SourceRecords.
+
+    remote_parser_url, when set, sends the cache-miss parse to a remote
+    GPU parsing service (see tuneforge.ingestion.remote_parser) instead of
+    parsing locally. If the remote service is unreachable
+    (RemoteParsingUnavailableError), this falls back to local CPU parsing
+    rather than failing the run — a translated document error
+    (encrypted/corrupt) is NOT retried locally, since local parsing would
+    deterministically hit the same error.
+
+    A fallback result is cached under its own filename (`-fallback`), never
+    under the `-remote` filename a genuine remote success uses — otherwise a
+    single transient DGX outage would permanently "downgrade" a document to
+    its CPU-parsed result, since a cache hit is checked before ever trying
+    remote again. Keeping them separate means a later call still attempts
+    remote fresh (self-healing once the DGX is back) and only reuses the
+    fallback result if that attempt fails again — the plain (no-suffix)
+    cache file is reused as-is regardless of mode, since it only ever holds
+    a parse that was never routed through a failed remote attempt at all.
     """
     source_hash = hash_file(path)
-    cache_path = cache_dir / f"{source_hash}-{docling.__version__}.json"
-    if cache_path.exists():
-        return DoclingDocument.load_from_json(cache_path), source_hash
+    version_key = f"{source_hash}-{docling.__version__}"
+    local_cache_path = cache_dir / f"{version_key}.json"
 
-    document = convert_document(path, converter=converter)
+    if remote_parser_url is None:
+        if local_cache_path.exists():
+            return DoclingDocument.load_from_json(local_cache_path), source_hash
+        document = convert_document(path, converter=converter)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        document.save_as_json(local_cache_path)
+        return document, source_hash
+
+    remote_cache_path = cache_dir / f"{version_key}-remote.json"
+    fallback_cache_path = cache_dir / f"{version_key}-fallback.json"
+    if remote_cache_path.exists():
+        return DoclingDocument.load_from_json(remote_cache_path), source_hash
+    if local_cache_path.exists():
+        return DoclingDocument.load_from_json(local_cache_path), source_hash
+
+    from tuneforge.ingestion.remote_parser import RemoteParsingUnavailableError, convert_document_remote
+
+    try:
+        document = convert_document_remote(path, base_url=remote_parser_url, token=remote_parser_token)
+    except RemoteParsingUnavailableError as exc:
+        logger.warning(
+            "remote docling parser at %s unavailable, falling back to local CPU parsing for %s: %s",
+            remote_parser_url, path.name, exc,
+        )
+        if fallback_cache_path.exists():
+            return DoclingDocument.load_from_json(fallback_cache_path), source_hash
+        document = convert_document(path, converter=converter)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        document.save_as_json(fallback_cache_path)
+        return document, source_hash
+
     cache_dir.mkdir(parents=True, exist_ok=True)
-    document.save_as_json(cache_path)
+    document.save_as_json(remote_cache_path)
     return document, source_hash

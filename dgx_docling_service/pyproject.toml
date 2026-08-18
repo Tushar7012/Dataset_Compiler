@@ -1,0 +1,22 @@
+[project]
+name = "dgx-docling-service"
+version = "0.1.0"
+description = "GPU-accelerated Docling parsing service, deployed to the DGX Spark"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "docling==2.120.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.27",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

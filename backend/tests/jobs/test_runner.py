@@ -480,7 +480,7 @@ def test_worker_builds_consent_from_the_runs_remote_consent_timestamp(env, monke
 
     monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
     monkeypatch.setattr(
-        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer, **kwargs: []
     )
     monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
 
@@ -508,7 +508,7 @@ def test_worker_builds_no_consent_when_none_was_granted(env, monkeypatch):
 
     monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
     monkeypatch.setattr(
-        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer, **kwargs: []
     )
     monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
 
@@ -522,6 +522,73 @@ def test_worker_builds_no_consent_when_none_was_granted(env, monkeypatch):
     assert captured["consent"] is None
 
 
+def test_worker_passes_remote_parser_url_and_token_when_consent_granted(env, monkeypatch):
+    session, artifact_store, project, run = env
+    granted_at = datetime.now(timezone.utc)
+    run.remote_consent_granted_at = granted_at
+    session.commit()
+    db_path = session.get_bind().url.database
+    session.close()
+
+    monkeypatch.setenv("TUNEFORGE_DOCLING_REMOTE_URL", "http://dgx:9000")
+    monkeypatch.setenv("DGX_PARSER_TOKEN", "test-bearer-value")
+
+    captured = {}
+
+    class _FakeTok:
+        tokenizer = object()
+
+    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
+
+    def fake_load_sources(session, artifact_store, project_id, tokenizer, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr("tuneforge.jobs.runner._load_project_sources", fake_load_sources)
+    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
+
+    async def fake_run_generation_async(**kwargs):
+        return None
+
+    monkeypatch.setattr("tuneforge.jobs.runner._run_generation_async", fake_run_generation_async)
+
+    run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
+
+    assert captured.get("remote_parser_url") == "http://dgx:9000"
+    assert captured.get("remote_parser_token") == "test-bearer-value"
+
+
+def test_worker_does_not_use_remote_parser_without_consent_even_if_configured(env, monkeypatch):
+    session, artifact_store, project, run = env  # run.remote_consent_granted_at is None by default
+    db_path = session.get_bind().url.database
+    session.close()
+
+    monkeypatch.setenv("TUNEFORGE_DOCLING_REMOTE_URL", "http://dgx:9000")
+
+    captured = {}
+
+    class _FakeTok:
+        tokenizer = object()
+
+    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
+
+    def fake_load_sources(session, artifact_store, project_id, tokenizer, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr("tuneforge.jobs.runner._load_project_sources", fake_load_sources)
+    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
+
+    async def fake_run_generation_async(**kwargs):
+        return None
+
+    monkeypatch.setattr("tuneforge.jobs.runner._run_generation_async", fake_run_generation_async)
+
+    run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
+
+    assert captured.get("remote_parser_url") is None
+
+
 def test_worker_marks_run_failed_on_unhandled_exception(env, monkeypatch):
     session, artifact_store, project, run = env
     db_path = session.get_bind().url.database
@@ -532,7 +599,7 @@ def test_worker_marks_run_failed_on_unhandled_exception(env, monkeypatch):
 
     monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
     monkeypatch.setattr(
-        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer, **kwargs: []
     )
     monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
 
@@ -567,7 +634,7 @@ def test_worker_redacts_secrets_from_its_own_process_logs(env, monkeypatch, capl
 
     monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
     monkeypatch.setattr(
-        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer, **kwargs: []
     )
     monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
 
@@ -602,6 +669,40 @@ def test_worker_process_can_be_spawned_and_joins_cleanly(tmp_path):
 
     assert process.exitcode == 0
     assert marker_path.read_text() == "ok"
+
+
+def test_load_project_sources_passes_remote_parser_kwargs_to_convert_document_cached(tmp_path, monkeypatch):
+    from tuneforge.ingestion.chunking import build_tokenizer
+    from tuneforge.ingestion.documents import convert_document
+    from tuneforge.jobs.runner import _load_project_sources
+    from tuneforge.storage.repositories import SourceRepository
+
+    engine = create_sqlite_engine(tmp_path / "data" / "tuneforge.db")
+    session = create_session_factory(engine)()
+    artifact_store = ArtifactStore(tmp_path / "data")
+    project = ProjectRepository(session, artifact_store).create("proj")
+
+    doc_path = tmp_path / "a.md"
+    doc_path.write_text("# Doc A\n\nDocument content.\n")
+    SourceRepository(session, artifact_store).add_source(project.id, doc_path)
+
+    real_document = convert_document(doc_path)
+    captured = {}
+
+    def fake_convert_document_cached(path, *, cache_dir, converter=None, remote_parser_url=None, remote_parser_token=None):
+        captured["remote_parser_url"] = remote_parser_url
+        captured["remote_parser_token"] = remote_parser_token
+        return real_document, "hash123"
+
+    monkeypatch.setattr("tuneforge.ingestion.documents.convert_document_cached", fake_convert_document_cached)
+
+    tokenizer = build_tokenizer("gpt2", max_tokens=64)
+    _load_project_sources(
+        session, artifact_store, project.id, tokenizer,
+        remote_parser_url="http://dgx:9000", remote_parser_token="secret",
+    )
+
+    assert captured == {"remote_parser_url": "http://dgx:9000", "remote_parser_token": "secret"}
 
 
 def test_load_project_sources_skips_confirmed_structured_sources(tmp_path):
@@ -736,7 +837,7 @@ def test_worker_merges_structured_records_into_a_completed_run(env, monkeypatch,
 
     monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
     monkeypatch.setattr(
-        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer, **kwargs: []
     )
     monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
 
@@ -786,7 +887,7 @@ def test_worker_does_not_re_merge_structured_records_when_already_merged(env, mo
 
     monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
     monkeypatch.setattr(
-        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer: []
+        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer, **kwargs: []
     )
     monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
 
@@ -810,7 +911,7 @@ def test_worker_marks_run_failed_when_load_project_sources_raises(env, monkeypat
 
     from tuneforge.ingestion.documents import UnsupportedDocumentError
 
-    def _raise(session, artifact_store, project_id, tokenizer):
+    def _raise(session, artifact_store, project_id, tokenizer, **kwargs):
         raise UnsupportedDocumentError("data.csv: unsupported document format '.csv'")
 
     monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())

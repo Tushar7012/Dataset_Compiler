@@ -9,7 +9,9 @@ from tuneforge.ingestion.documents import (
     UnsupportedDocumentError,
     convert_document,
     convert_document_cached,
+    hash_file,
 )
+from tuneforge.ingestion.remote_parser import RemoteParsingUnavailableError
 
 
 class _FakeConverter:
@@ -111,3 +113,126 @@ def test_cache_hit_never_calls_the_converter(tmp_path):
     convert_document_cached(path, cache_dir=cache_dir, converter=fake_converter)
 
     assert fake_converter.calls == 0
+
+
+def test_cache_miss_with_remote_parser_url_calls_remote_not_local(tmp_path, monkeypatch):
+    path = tmp_path / "policy.md"
+    path.write_text("# Title\n\nRemote content.\n")
+    cache_dir = tmp_path / "cache"
+    real_document = convert_document(path)
+    captured = {}
+
+    def fake_convert_document_remote(path_arg, *, base_url, token=None):
+        captured["path"] = path_arg
+        captured["base_url"] = base_url
+        captured["token"] = token
+        return real_document
+
+    monkeypatch.setattr("tuneforge.ingestion.remote_parser.convert_document_remote", fake_convert_document_remote)
+    local_converter = _FakeConverter(raises=AssertionError("must not call local converter when remote succeeds"))
+
+    document, source_hash = convert_document_cached(
+        path, cache_dir=cache_dir, converter=local_converter,
+        remote_parser_url="http://dgx:9000", remote_parser_token="test-value",
+    )
+
+    assert captured == {"path": path, "base_url": "http://dgx:9000", "token": "test-value"}
+    assert document.export_to_markdown() == real_document.export_to_markdown()
+    assert source_hash == hash_file(path)
+
+
+def test_falls_back_to_local_when_remote_parsing_unavailable(tmp_path, monkeypatch):
+    path = tmp_path / "policy.md"
+    path.write_text("# Title\n\nFallback content.\n")
+    cache_dir = tmp_path / "cache"
+
+    def fake_convert_document_remote(path_arg, *, base_url, token=None):
+        raise RemoteParsingUnavailableError("dgx unreachable")
+
+    monkeypatch.setattr("tuneforge.ingestion.remote_parser.convert_document_remote", fake_convert_document_remote)
+
+    document, _ = convert_document_cached(path, cache_dir=cache_dir, remote_parser_url="http://dgx:9000")
+
+    assert "Fallback content." in document.export_to_markdown()
+
+
+def test_does_not_fall_back_to_local_on_encrypted_document_error(tmp_path, monkeypatch):
+    path = tmp_path / "locked.pdf"
+    path.write_bytes(b"%PDF-1.4 fake but non-empty")
+    cache_dir = tmp_path / "cache"
+
+    def fake_convert_document_remote(path_arg, *, base_url, token=None):
+        raise EncryptedDocumentError("locked")
+
+    monkeypatch.setattr("tuneforge.ingestion.remote_parser.convert_document_remote", fake_convert_document_remote)
+    local_converter = _FakeConverter(raises=AssertionError("must not fall back to local for a content error"))
+
+    with pytest.raises(EncryptedDocumentError):
+        convert_document_cached(
+            path, cache_dir=cache_dir, converter=local_converter, remote_parser_url="http://dgx:9000"
+        )
+
+
+def test_a_fallback_cache_entry_does_not_prevent_a_later_successful_remote_call(tmp_path, monkeypatch):
+    # The bug this guards against: if a fallback (remote unreachable -> local
+    # CPU parse) wrote to the SAME cache file a real remote success would, a
+    # single transient DGX outage would permanently "stick" a document to
+    # its CPU-parsed result — the cache hit is checked before remote is ever
+    # tried again. Fallback results must live in a separate cache entry.
+    path = tmp_path / "policy.md"
+    path.write_text("# Title\n\nHealed content.\n")
+    cache_dir = tmp_path / "cache"
+
+    def failing_remote(path_arg, *, base_url, token=None):
+        raise RemoteParsingUnavailableError("dgx unreachable")
+
+    monkeypatch.setattr("tuneforge.ingestion.remote_parser.convert_document_remote", failing_remote)
+    convert_document_cached(path, cache_dir=cache_dir, remote_parser_url="http://dgx:9000")
+
+    real_document = convert_document(path)
+    calls = {"count": 0}
+
+    def healed_remote(path_arg, *, base_url, token=None):
+        calls["count"] += 1
+        return real_document
+
+    monkeypatch.setattr("tuneforge.ingestion.remote_parser.convert_document_remote", healed_remote)
+    document, _ = convert_document_cached(path, cache_dir=cache_dir, remote_parser_url="http://dgx:9000")
+
+    assert calls["count"] == 1  # remote was attempted again, not permanently skipped by the fallback cache
+    assert "Healed content." in document.export_to_markdown()
+
+
+def test_successful_remote_result_is_reused_without_calling_remote_again(tmp_path, monkeypatch):
+    path = tmp_path / "policy.md"
+    path.write_text("# Title\n\nRemote content.\n")
+    cache_dir = tmp_path / "cache"
+    real_document = convert_document(path)
+
+    monkeypatch.setattr(
+        "tuneforge.ingestion.remote_parser.convert_document_remote",
+        lambda path_arg, *, base_url, token=None: real_document,
+    )
+    convert_document_cached(path, cache_dir=cache_dir, remote_parser_url="http://dgx:9000")
+
+    def fail_if_called(path_arg, *, base_url, token=None):
+        raise AssertionError("should not call remote again once a -remote cache entry exists")
+
+    monkeypatch.setattr("tuneforge.ingestion.remote_parser.convert_document_remote", fail_if_called)
+    document, _ = convert_document_cached(path, cache_dir=cache_dir, remote_parser_url="http://dgx:9000")
+
+    assert "Remote content." in document.export_to_markdown()
+
+
+def test_cache_hit_never_calls_the_remote_parser(tmp_path, monkeypatch):
+    path = tmp_path / "policy.md"
+    path.write_text("# Title\n\nCached content.\n")
+    cache_dir = tmp_path / "cache"
+
+    convert_document_cached(path, cache_dir=cache_dir)
+
+    def fake_convert_document_remote(path_arg, *, base_url, token=None):
+        raise AssertionError("should not be called on a cache hit")
+
+    monkeypatch.setattr("tuneforge.ingestion.remote_parser.convert_document_remote", fake_convert_document_remote)
+    convert_document_cached(path, cache_dir=cache_dir, remote_parser_url="http://dgx:9000")

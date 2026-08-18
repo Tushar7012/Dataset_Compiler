@@ -28,8 +28,18 @@ def _get_run_or_404(session: Session, run_id: uuid.UUID) -> RunRecord:
 
 
 def _requires_remote_consent(
-    session: Session, generator_profile_id: uuid.UUID, judge_profile_id: uuid.UUID | None
+    session: Session,
+    generator_profile_id: uuid.UUID,
+    judge_profile_id: uuid.UUID | None,
+    *,
+    remote_parsing_enabled: bool = False,
 ) -> bool:
+    # Remote document parsing (the DGX GPU service, when configured) sends
+    # document bytes off the machine just like a remote LLM provider sends
+    # document text — same consent rule applies, gated coarsely per-run
+    # rather than adding a second, parsing-specific consent flow.
+    if remote_parsing_enabled:
+        return True
     generator = session.get(ProviderProfileRecord, generator_profile_id)
     if generator is not None and generator.endpoint_scope == "remote":
         return True
@@ -45,12 +55,21 @@ def _resolve_remote_consent(
     payload: dict,
     generator_profile_id: uuid.UUID,
     judge_profile_id: uuid.UUID | None,
+    *,
+    remote_parsing_enabled: bool = False,
 ) -> datetime | None:
-    if not _requires_remote_consent(session, generator_profile_id, judge_profile_id):
+    if not _requires_remote_consent(
+        session, generator_profile_id, judge_profile_id, remote_parsing_enabled=remote_parsing_enabled
+    ):
         return None
     if not payload.get("remote_consent"):
         raise HTTPException(status_code=422, detail=_CONSENT_ERROR)
     return datetime.now(timezone.utc)
+
+
+def _remote_parsing_enabled(request: Request) -> bool:
+    settings = getattr(request.app.state, "settings", None)
+    return bool(settings and settings.docling_remote_url)
 
 
 @router.post("/runs/preview", status_code=201)
@@ -66,7 +85,9 @@ async def create_preview(payload: dict, request: Request, session: Session = Dep
 
     generator_uuid = uuid.UUID(generator_profile_id)
     judge_uuid = uuid.UUID(payload["judge_profile_id"]) if payload.get("judge_profile_id") else None
-    remote_consent_granted_at = _resolve_remote_consent(session, payload, generator_uuid, judge_uuid)
+    remote_consent_granted_at = _resolve_remote_consent(
+        session, payload, generator_uuid, judge_uuid, remote_parsing_enabled=_remote_parsing_enabled(request)
+    )
 
     run = RunRecord(
         id=uuid.uuid4(),
@@ -146,7 +167,8 @@ async def approve_full(
     # PLAN.md requires explicit consent per run, so this doesn't inherit the
     # preview's grant even though it reuses the same provider profiles.
     remote_consent_granted_at = _resolve_remote_consent(
-        session, payload, preview_run.generator_profile_id, preview_run.judge_profile_id
+        session, payload, preview_run.generator_profile_id, preview_run.judge_profile_id,
+        remote_parsing_enabled=_remote_parsing_enabled(request),
     )
 
     full_run = RunRecord(

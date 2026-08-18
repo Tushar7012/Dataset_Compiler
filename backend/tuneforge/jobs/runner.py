@@ -190,7 +190,15 @@ def _spawn_probe(marker_path: str) -> None:
     Path(marker_path).write_text("ok")
 
 
-def _load_project_sources(session, artifact_store, project_id: uuid.UUID, tokenizer) -> list[SourceRecord]:
+def _load_project_sources(
+    session,
+    artifact_store,
+    project_id: uuid.UUID,
+    tokenizer,
+    *,
+    remote_parser_url: str | None = None,
+    remote_parser_token: str | None = None,
+) -> list[SourceRecord]:
     from tuneforge.ingestion.chunking import chunk_into_source_records
     from tuneforge.ingestion.documents import convert_document_cached
     from tuneforge.storage.repositories import SourceRepository
@@ -208,7 +216,12 @@ def _load_project_sources(session, artifact_store, project_id: uuid.UUID, tokeni
         if source_row.confirmed_schema is not None:
             continue
         file_path = source_repo.get_source_path(source_row)
-        document, source_hash = convert_document_cached(file_path, cache_dir=cache_dir)
+        document, source_hash = convert_document_cached(
+            file_path,
+            cache_dir=cache_dir,
+            remote_parser_url=remote_parser_url,
+            remote_parser_token=remote_parser_token,
+        )
         document_id = uuid.uuid4()
         chunks = chunk_into_source_records(
             document,
@@ -318,6 +331,7 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
     # setup (tuneforge.main.create_app) never reaches here.
     register_redaction_token(lambda: os.environ.get("GEMINI_API_KEY"))
     register_redaction_token(lambda: os.environ.get("HF_TOKEN"))
+    register_redaction_token(lambda: os.environ.get("DGX_PARSER_TOKEN"))
     install_log_redaction()
     from tuneforge.models.analyzer import ModelProfile
     from tuneforge.storage.artifacts import ArtifactStore
@@ -355,7 +369,21 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
         # structured source that slipped past _load_project_sources's filter (or
         # any other loading failure) would kill the worker without ever setting
         # run.status to "failed", leaving the run stuck. See CLAUDE.md's known gaps.
-        sources = _load_project_sources(session, artifact_store, run.project_id, tokenizer)
+        #
+        # Remote (DGX) parsing is only ever used when this run was granted
+        # remote consent — the API layer already refuses to create a run
+        # without it whenever remote parsing is configured (api/runs.py's
+        # _requires_remote_consent), so this check is a second line of
+        # defense, not the only gate.
+        from tuneforge.settings import Settings
+
+        settings = Settings()
+        remote_parser_url = settings.docling_remote_url if run.remote_consent_granted_at is not None else None
+        sources = _load_project_sources(
+            session, artifact_store, run.project_id, tokenizer,
+            remote_parser_url=remote_parser_url,
+            remote_parser_token=os.environ.get("DGX_PARSER_TOKEN"),
+        )
 
         from tuneforge.storage.models import CheckpointRecord
 
