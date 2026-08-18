@@ -4,7 +4,10 @@ from tuneforge.settings import Settings
 
 def test_all_routers_are_mounted(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    app = create_app(Settings())
+    # docling_remote_url explicitly None — Settings() reads real process/dotenv
+    # env vars same as production, so this must not depend on whatever the
+    # developer's real .env currently has TUNEFORGE_DOCLING_REMOTE_URL set to.
+    app = create_app(Settings(docling_remote_url=None))
 
     # Prefer OpenAPI paths — app.routes can include non-path wrappers
     # (_IncludedRouter) depending on FastAPI/Starlette version.
@@ -26,7 +29,10 @@ def test_project_endpoints_require_bearer_auth(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    app = create_app(Settings())
+    # docling_remote_url explicitly None — Settings() reads real process/dotenv
+    # env vars same as production, so this must not depend on whatever the
+    # developer's real .env currently has TUNEFORGE_DOCLING_REMOTE_URL set to.
+    app = create_app(Settings(docling_remote_url=None))
     client = TestClient(app)
 
     response = client.post("/api/projects", json={"name": "test"})

@@ -1,26 +1,41 @@
 // Holds the process-generated bearer token in memory only — never localStorage,
 // never a cookie. A page reload always re-fetches from the server, which is
 // exactly the "held in memory only, never persisted" contract this app requires.
-let cachedToken: Promise<string> | null = null
+interface SessionBootstrap {
+  token: string
+  remote_parsing_enabled: boolean
+}
 
-export function getSessionToken(): Promise<string> {
-  if (!cachedToken) {
-    cachedToken = fetch('/api/session')
+let cachedSession: Promise<SessionBootstrap> | null = null
+
+function fetchSession(): Promise<SessionBootstrap> {
+  if (!cachedSession) {
+    cachedSession = fetch('/api/session')
       .then((response) => {
         if (!response.ok) {
           throw new Error(`session bootstrap failed: ${response.status}`)
         }
-        return response.json() as Promise<{ token: string }>
+        return response.json() as Promise<SessionBootstrap>
       })
-      .then(({ token }) => token)
       .catch((error: unknown) => {
-        cachedToken = null
+        cachedSession = null
         throw error
       })
   }
-  return cachedToken
+  return cachedSession
+}
+
+export function getSessionToken(): Promise<string> {
+  return fetchSession().then((session) => session.token)
+}
+
+// True when the server has a remote (DGX) docling-parsing service configured.
+// Provider endpoint_scope alone can't tell the wizard this — a project can use
+// entirely local LLM providers and still need remote-parsing consent.
+export function getRemoteParsingEnabled(): Promise<boolean> {
+  return fetchSession().then((session) => session.remote_parsing_enabled)
 }
 
 export function resetSessionTokenForTests(): void {
-  cachedToken = null
+  cachedSession = null
 }

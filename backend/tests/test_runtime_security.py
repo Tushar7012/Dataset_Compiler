@@ -9,7 +9,10 @@ from tuneforge.settings import Settings
 
 
 def make_client(tmp_path: Path):
-    app = create_app(Settings(data_dir=tmp_path))
+    # docling_remote_url explicitly None — these tests must not depend on
+    # whatever the developer's real .env currently has TUNEFORGE_DOCLING_REMOTE_URL
+    # set to (Settings() reads real process/dotenv env vars same as production).
+    app = create_app(Settings(data_dir=tmp_path, docling_remote_url=None))
     return app, TestClient(app)
 
 
@@ -30,7 +33,15 @@ def test_session_bootstrap_returns_token_without_auth_header(tmp_path):
     app, client = make_client(tmp_path)
     resp = client.get("/api/session")
     assert resp.status_code == 200
-    assert resp.json() == {"token": app.state.session_token}
+    assert resp.json() == {"token": app.state.session_token, "remote_parsing_enabled": False}
+
+
+def test_session_bootstrap_reports_remote_parsing_enabled_when_configured(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path, docling_remote_url="http://dgx:9100"))
+    client = TestClient(app)
+    resp = client.get("/api/session")
+    assert resp.status_code == 200
+    assert resp.json()["remote_parsing_enabled"] is True
 
 
 def test_session_bootstrap_rejects_mismatched_origin(tmp_path):
@@ -44,7 +55,7 @@ def test_session_bootstrap_allows_matching_origin(tmp_path):
     origin = f"http://127.0.0.1:{app.state.settings.port}"
     resp = client.get("/api/session", headers={"Origin": origin})
     assert resp.status_code == 200
-    assert resp.json() == {"token": app.state.session_token}
+    assert resp.json() == {"token": app.state.session_token, "remote_parsing_enabled": False}
 
 
 def test_version_reports_configured_version(tmp_path):

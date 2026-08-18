@@ -35,6 +35,34 @@ test.describe('CPT website flow', () => {
     await expect(page.getByRole('heading', { name: /suggested training goal/i })).toBeVisible()
     await page.getByRole('button', { name: /skip/i }).click()
 
+    // Provider configuration precedes goal selection in the wizard (the
+    // training goal isn't known yet at this point — see ProviderConfigStep).
+    await expect(page.getByRole('heading', { name: /provider configuration/i })).toBeVisible()
+    await page.getByLabel(/provider name/i).fill('local-stub')
+    await page.getByLabel(/base url/i).fill('http://127.0.0.1:8765/v1')
+    await page.getByLabel(/^model$/i).fill('stub-model')
+    await page.getByRole('button', { name: /create provider/i }).click()
+
+    await expect(page.getByRole('heading', { name: /judge model/i })).toBeVisible()
+    await page.getByRole('button', { name: /skip.*no judge model/i }).click()
+
+    await expect(page.getByRole('heading', { name: /provider ready/i })).toBeVisible()
+    // Consent is only required if this server has a remote provider or remote
+    // document parsing configured — both local here, but stay robust to a
+    // dev environment where TUNEFORGE_DOCLING_REMOTE_URL is set. Whether the
+    // checkbox is needed is only known once ProviderConfigStep's own
+    // remote-parsing-enabled query resolves, so wait for it rather than a
+    // one-shot count() that can read 0 in the split second before it mounts.
+    const consentCheckbox = page.getByRole('checkbox')
+    const consentAppeared = await consentCheckbox
+      .waitFor({ state: 'visible', timeout: 5_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (consentAppeared) {
+      await consentCheckbox.check()
+    }
+    await page.getByRole('button', { name: /continue/i }).click()
+
     await expect(page.getByRole('heading', { name: /^training goal$/i })).toBeVisible()
     await page.getByLabel(/training goal/i).selectOption('domain_adaptation')
     await page.getByLabel(/desired behavior/i).fill('Adapt to company policy language.')
@@ -47,13 +75,6 @@ test.describe('CPT website flow', () => {
       timeout: 60_000,
     })
     await page.getByRole('button', { name: /approve/i }).click()
-
-    await expect(page.getByRole('heading', { name: /provider configuration/i })).toBeVisible()
-    await page.getByLabel(/provider name/i).fill('local-stub')
-    await page.getByLabel(/base url/i).fill('http://127.0.0.1:8765/v1')
-    await page.getByLabel(/^model$/i).fill('stub-model')
-    await page.getByRole('button', { name: /create provider/i }).click()
-    await page.getByRole('button', { name: /continue/i }).click()
 
     await expect(page.getByRole('heading', { name: /^preview$/i })).toBeVisible()
     await page.getByRole('button', { name: /generate preview/i }).click()

@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { createProvider } from '../../api/providers'
+import { getRemoteParsingEnabled } from '../../api/session'
 import { ApiError } from '../../api/client'
 import { useFocusOnMount } from '../../useFocusOnMount'
 import type { EndpointScope, ProviderProfile } from '../../api/types'
@@ -262,6 +263,15 @@ export function ProviderConfigStep({ projectId, onProviderReady }: ProviderConfi
   const [judgeChoice, setJudgeChoice] = useState<JudgeChoice>('undecided')
   const [consentGranted, setConsentGranted] = useState(false)
 
+  // A project can use entirely local LLM providers and still need consent —
+  // TUNEFORGE_DOCLING_REMOTE_URL sends document bytes to a remote GPU
+  // parsing service regardless of where the generator/judge live. Provider
+  // endpoint_scope alone can't tell us that; only the server can.
+  const remoteParsingQuery = useQuery({
+    queryKey: ['remote-parsing-enabled'],
+    queryFn: getRemoteParsingEnabled,
+  })
+
   const generatorMutation = useMutation({
     mutationFn: () =>
       createProvider(projectId, {
@@ -338,8 +348,16 @@ export function ProviderConfigStep({ projectId, onProviderReady }: ProviderConfi
 
   const effectiveJudgeProvider = judgeChoice === 'add' ? judgeProvider : undefined
   const needsConsent =
-    generatorProvider.endpoint_scope === 'remote' || effectiveJudgeProvider?.endpoint_scope === 'remote'
-  const canContinue = !needsConsent || consentGranted
+    generatorProvider.endpoint_scope === 'remote' ||
+    effectiveJudgeProvider?.endpoint_scope === 'remote' ||
+    remoteParsingQuery.data === true
+  // Require remoteParsingQuery to have actually resolved before Continue can
+  // ever be enabled — otherwise the brief window where .data is still
+  // undefined would read as "no remote parsing configured" for an
+  // all-local-provider project, letting Continue be clicked before the real
+  // answer is known (server-side consent enforcement still catches it, but
+  // the button shouldn't be clickable on an unanswered question).
+  const canContinue = remoteParsingQuery.isSuccess && (!needsConsent || consentGranted)
 
   return (
     <ProviderReadyPanel

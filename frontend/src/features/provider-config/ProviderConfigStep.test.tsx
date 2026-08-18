@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
-import { screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe } from 'vitest-axe'
 import { renderWithProviders } from '../../test-utils'
@@ -9,10 +9,15 @@ import { ProviderConfigStep } from './ProviderConfigStep'
 vi.mock('../../api/providers', () => ({
   createProvider: vi.fn(),
 }))
+vi.mock('../../api/session', () => ({
+  getRemoteParsingEnabled: vi.fn(),
+}))
 
 import { createProvider } from '../../api/providers'
+import { getRemoteParsingEnabled } from '../../api/session'
 
 const mockCreateProvider = vi.mocked(createProvider)
+const mockGetRemoteParsingEnabled = vi.mocked(getRemoteParsingEnabled)
 
 async function createGenerator(
   user: ReturnType<typeof userEvent.setup>,
@@ -29,6 +34,10 @@ async function createGenerator(
 }
 
 describe('ProviderConfigStep', () => {
+  beforeEach(() => {
+    mockGetRemoteParsingEnabled.mockResolvedValue(false)
+  })
+
   it('renders the provider fields with no consent section yet', () => {
     renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={vi.fn()} />)
 
@@ -84,6 +93,61 @@ describe('ProviderConfigStep', () => {
       undefined,
       false,
     )
+  })
+
+  it('requires consent for two local providers when the server has remote parsing configured', async () => {
+    // Regression: needsConsent used to be derived only from provider
+    // endpoint_scope, so a project with two local LLM providers would never
+    // show the consent checkbox even when TUNEFORGE_DOCLING_REMOTE_URL is
+    // configured server-side — the run would then 422 forever with no way
+    // to grant consent through the UI. Found via a real Playwright e2e run.
+    mockGetRemoteParsingEnabled.mockResolvedValue(true)
+    const user = userEvent.setup()
+    mockCreateProvider.mockResolvedValue({ id: 'prov-1', name: 'ollama', endpoint_scope: 'local' })
+    const onProviderReady = vi.fn()
+    renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={onProviderReady} />)
+
+    await createGenerator(user)
+    await user.click(screen.getByRole('button', { name: /skip.*no judge model/i }))
+
+    const consentCheckbox = await screen.findByLabelText(/consent/i)
+    const continueButton = screen.getByRole('button', { name: /continue/i })
+    expect(continueButton).toBeDisabled()
+
+    await user.click(consentCheckbox)
+    expect(continueButton).toBeEnabled()
+    await user.click(continueButton)
+
+    expect(onProviderReady).toHaveBeenCalledWith(
+      { id: 'prov-1', name: 'ollama', endpoint_scope: 'local' },
+      undefined,
+      true,
+    )
+  })
+
+  it('keeps Continue disabled while remote-parsing-enabled is still loading, even with two local providers', async () => {
+    // Regression guard for the fix above: needsConsent reads
+    // remoteParsingQuery.data === true, which is undefined (falsy) while the
+    // query is still in flight — canContinue must not treat "still loading"
+    // as "answer is no consent needed" just because both providers are local.
+    let resolveQuery: (value: boolean) => void = () => {}
+    mockGetRemoteParsingEnabled.mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        resolveQuery = resolve
+      }),
+    )
+    const user = userEvent.setup()
+    mockCreateProvider.mockResolvedValue({ id: 'prov-1', name: 'ollama', endpoint_scope: 'local' })
+    renderWithProviders(<ProviderConfigStep projectId="proj-1" onProviderReady={vi.fn()} />)
+
+    await createGenerator(user)
+    await user.click(screen.getByRole('button', { name: /skip.*no judge model/i }))
+
+    const continueButton = await screen.findByRole('button', { name: /continue/i })
+    expect(continueButton).toBeDisabled()
+
+    resolveQuery(false)
+    await waitFor(() => expect(continueButton).toBeEnabled())
   })
 
   it('requires an explicit consent checkbox for a remote generator before Continue is enabled', async () => {
