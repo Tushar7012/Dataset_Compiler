@@ -31,10 +31,14 @@ const HF_DPO_GENERATOR_PRESET: HfPreset = {
   model: 'Qwen/Qwen3-Next-80B-A3B-Instruct',
 }
 
+// Qwen3-235B-A22B-Instruct-2507, not the -Thinking- sibling: the Thinking checkpoint
+// wraps every answer in a long <think> reasoning block and routinely exceeds this
+// app's provider timeout (measured 30s+ per call vs ~1s here) — same model family
+// and size, without the latency cost, and still distinct from the generator model.
 const HF_DPO_JUDGE_PRESET: HfPreset = {
   label: 'Use Hugging Face router — Qwen3 DPO judge',
   name: 'hf-router-judge',
-  model: 'Qwen/Qwen3-235B-A22B-Thinking-2507',
+  model: 'Qwen/Qwen3-235B-A22B-Instruct-2507',
 }
 
 function errorMessage(error: unknown): string {

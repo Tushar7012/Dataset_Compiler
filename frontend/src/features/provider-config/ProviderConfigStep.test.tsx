@@ -116,7 +116,7 @@ describe('ProviderConfigStep', () => {
     expect(screen.getByRole('heading', { name: /judge provider configuration/i })).toHaveFocus()
     await user.type(screen.getByLabelText(/provider name/i), 'hf-router-judge')
     await user.type(screen.getByLabelText(/base url/i), 'https://router.huggingface.co/v1')
-    await user.type(screen.getByLabelText(/^model$/i), 'Qwen/Qwen3-235B-A22B-Thinking-2507')
+    await user.type(screen.getByLabelText(/^model$/i), 'Qwen/Qwen3-235B-A22B-Instruct-2507')
     await user.selectOptions(screen.getByLabelText(/endpoint scope/i), 'remote')
     await user.click(screen.getByRole('button', { name: /create provider/i }))
 

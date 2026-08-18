@@ -95,7 +95,7 @@ def test_hf_router_provider_without_api_key_falls_back_to_hf_token_credential(cl
         json={
             "project_id": str(_project_id(client)), "name": "hf-router-judge",
             "base_url": "https://router.huggingface.co/v1",
-            "model": "Qwen/Qwen3-235B-A22B-Thinking-2507", "endpoint_scope": "remote",
+            "model": "Qwen/Qwen3-235B-A22B-Instruct-2507", "endpoint_scope": "remote",
         },
     )
 
