@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 
@@ -196,6 +197,42 @@ async def test_dpo_judge_tolerates_a_thinking_model_wrapping_its_score():
     assert record is not None
     assert record.chosen[0].content == "best answer"
     assert record.rejected[0].content == "bad answer"
+
+
+async def test_dpo_candidates_are_generated_concurrently_not_sequentially():
+    # Proves the 4 candidate generate+score round trips are in flight together,
+    # not one-at-a-time — a handler that yields control (await asyncio.sleep)
+    # before resolving lets concurrent calls overlap; a sequential loop would
+    # never show more than 1 in flight at once.
+    concurrent_generations = 0
+    max_concurrent_generations = 0
+
+    async def handler(request):
+        nonlocal concurrent_generations, max_concurrent_generations
+        payload = json.loads(request.content)
+        prompt = payload["messages"][0]["content"]
+        if "QUESTION:" in prompt:
+            return _chat_response({"score": 5.0})
+        concurrent_generations += 1
+        max_concurrent_generations = max(max_concurrent_generations, concurrent_generations)
+        await asyncio.sleep(0.01)
+        concurrent_generations -= 1
+        return _chat_response(
+            {
+                "question": "How many vacation days?",
+                "answer": f"answer-{uuid.uuid4()}",
+                "supporting_quote": "20 days of paid vacation",
+            }
+        )
+
+    generator = _provider(handler)
+    judge = _provider(handler)
+    record = await generate_dpo_record(
+        generator, judge, _source(), GenerationSpec(desired_behavior="dpo", max_candidates=4, score_margin=0.0)
+    )
+
+    assert record is not None
+    assert max_concurrent_generations >= 2
 
 
 async def test_dpo_rejects_when_candidate_scores_are_too_close():

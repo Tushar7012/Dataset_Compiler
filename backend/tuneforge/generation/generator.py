@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -143,6 +144,19 @@ async def _score_candidate(
         raise MalformedGenerationError(f"judge response was not a valid score: {exc}") from exc
 
 
+async def _generate_and_score_candidate(
+    generator: OpenAICompatibleProvider,
+    judge: OpenAICompatibleProvider,
+    *,
+    question: str,
+    source: SourceRecord,
+    consent: RunConsent | None,
+) -> tuple[float, str]:
+    candidate = await _generate_qa_candidate(generator, source, consent)
+    score = await _score_candidate(judge, question=question, answer=candidate["answer"], source=source, consent=consent)
+    return score, candidate["answer"]
+
+
 async def generate_dpo_record(
     generator: OpenAICompatibleProvider,
     judge: OpenAICompatibleProvider,
@@ -156,13 +170,21 @@ async def generate_dpo_record(
             question_candidate = await _generate_qa_candidate(generator, source, consent)
             question = question_candidate["question"]
 
-            scored: list[tuple[float, str]] = []
-            for _candidate_index in range(spec.max_candidates):
-                candidate = await _generate_qa_candidate(generator, source, consent)
-                score = await _score_candidate(
-                    judge, question=question, answer=candidate["answer"], source=source, consent=consent
+            # ponytail: the 4 candidates are independent draws — gather them
+            # instead of a sequential loop. A candidate that errors mid-flight
+            # still lets its siblings' already-issued requests run to
+            # completion in the background (gather doesn't cancel them), so a
+            # failing attempt can cost a few extra provider calls versus the
+            # old fail-fast loop. Acceptable: it's the rare path (retries
+            # already exist for it) and never affects a successful attempt.
+            scored = list(
+                await asyncio.gather(
+                    *(
+                        _generate_and_score_candidate(generator, judge, question=question, source=source, consent=consent)
+                        for _ in range(spec.max_candidates)
+                    )
                 )
-                scored.append((score, candidate["answer"]))
+            )
 
             scored.sort(key=lambda pair: pair[0])
             worst_score, worst_answer = scored[0]

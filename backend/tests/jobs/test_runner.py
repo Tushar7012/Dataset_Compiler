@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from tuneforge.generation.specs import GenerationSpec
 from tuneforge.jobs.checkpoints import get_latest_checkpoint
 from tuneforge.jobs.runner import MAX_ACCEPTED_ROWS, _run_generation_async, run_generation_worker, run_output_path
 from tuneforge.planning.schemas import TrainingPlan
-from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
+from tuneforge.providers.openai_compatible import OpenAICompatibleProvider, ProviderAuthError
 from tuneforge.providers.protocol import ProviderProfile, RunConsent
 from tuneforge.records import SourceRecord
 from tuneforge.storage.artifacts import ArtifactStore
@@ -228,6 +229,152 @@ async def test_cancel_requested_stops_the_run_gracefully(env):
     session.refresh(run)
     assert run.status == "cancelled"
     assert run.completed_rows == 0
+
+
+async def test_chunks_are_processed_with_bounded_concurrency(env):
+    # Proves chunk-level fan-out is real, bounded concurrency, and that the
+    # sequential post-processing still writes records in original chunk
+    # order even when generation completes out of order: earlier chunks in
+    # each batch are given a longer delay than later ones, so completion
+    # order is deliberately reversed relative to source order.
+    session, artifact_store, project, run = env
+    sources = _sources(uuid.uuid4(), 8)
+    concurrent_chunks = 0
+    max_concurrent_chunks = 0
+
+    async def handler(request):
+        nonlocal concurrent_chunks, max_concurrent_chunks
+        payload = json.loads(request.content)
+        prompt = payload["messages"][0]["content"]
+        source_text = prompt.split("Source text:\n")[1].split("\n\n")[0]
+        chunk_index = int(source_text.split("Fact number ")[1].split(" ")[0])
+        concurrent_chunks += 1
+        max_concurrent_chunks = max(max_concurrent_chunks, concurrent_chunks)
+        await asyncio.sleep(0.03 - (chunk_index % 4) * 0.01)  # reverses completion order within each batch
+        concurrent_chunks -= 1
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {"question": "Q?", "answer": f"Answer for chunk {chunk_index}.", "supporting_quote": source_text}
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    generator = _provider(handler)
+
+    await _run_generation_async(
+        session=session, run=run, plan=_sft_plan(), sources=sources, generator=generator, judge=None,
+        spec=GenerationSpec(desired_behavior="sft"), tokenizer=_FakeTokenizer(), max_tokens=512,
+        target_rows=1000, resume_from_chunk=0,
+        output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
+        concurrency_limit=4,
+    )
+
+    session.refresh(run)
+    assert run.status == "completed"
+    assert run.completed_rows == 8
+    assert max_concurrent_chunks == 4  # a full batch really was in flight together, not staggered
+
+    output_lines = run_output_path(artifact_store.base_dir, project.id, run.id).read_text().strip().splitlines()
+    answers = [json.loads(line)["completion"] for line in output_lines]
+    assert answers == [f"Answer for chunk {i}." for i in range(8)]  # written in source order despite reversed completion
+
+
+async def test_hard_provider_failure_cancels_sibling_chunks_in_the_same_batch(env):
+    # generate_record only retries MalformedGenerationError/GroundingError
+    # internally — anything else (auth, malformed response) is a hard
+    # failure that must propagate. Proves the other chunks already in
+    # flight in that batch get cancelled rather than left running to
+    # completion with nothing to await them.
+    session, artifact_store, project, run = env
+    sources = _sources(uuid.uuid4(), 4)  # one full batch at the default concurrency_limit
+    completed_after_sleep = []
+
+    async def handler(request):
+        payload = json.loads(request.content)
+        prompt = payload["messages"][0]["content"]
+        source_text = prompt.split("Source text:\n")[1].split("\n\n")[0]
+        if source_text == "Fact number 1 about the source document.":
+            return httpx.Response(401)  # ProviderAuthError, raised immediately, no retry
+        await asyncio.sleep(0.2)  # long enough that the 401 above resolves first
+        completed_after_sleep.append(source_text)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": json.dumps({"question": "Q?", "answer": "A.", "supporting_quote": source_text})}}
+                ]
+            },
+        )
+
+    generator = _provider(handler)
+
+    with pytest.raises(ProviderAuthError):
+        await _run_generation_async(
+            session=session, run=run, plan=_sft_plan(), sources=sources, generator=generator, judge=None,
+            spec=GenerationSpec(desired_behavior="sft"), tokenizer=_FakeTokenizer(), max_tokens=512,
+            target_rows=1000, resume_from_chunk=0,
+            output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
+            concurrency_limit=4,
+        )
+
+    assert completed_after_sleep == []  # siblings were cancelled mid-sleep, not left running
+
+
+async def test_cancel_mid_run_is_bounded_to_one_batch_not_accumulated_across_batches(env):
+    # Cancellation is checked once per batch, not once per chunk (item 2 of
+    # DGX_plan.md's Part 2 plan) — this proves the delay that introduces is
+    # bounded to whatever's already in flight (one batch), not something
+    # that grows with however many chunks/batches remain in the run.
+    session, artifact_store, project, run = env
+    sources = _sources(uuid.uuid4(), 12)  # 3 batches at concurrency_limit=4
+    handler_calls = 0
+    cancel_already_requested = False
+
+    async def handler(request):
+        nonlocal handler_calls, cancel_already_requested
+        handler_calls += 1
+        payload = json.loads(request.content)
+        prompt = payload["messages"][0]["content"]
+        source_text = prompt.split("Source text:\n")[1].split("\n\n")[0]
+        if source_text == "Fact number 0 about the source document." and not cancel_already_requested:
+            cancel_already_requested = True
+            run.status = "cancel_requested"
+            session.commit()
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": json.dumps({"question": "Q?", "answer": "A.", "supporting_quote": source_text})}}
+                ]
+            },
+        )
+
+    generator = _provider(handler)
+
+    await _run_generation_async(
+        session=session, run=run, plan=_sft_plan(), sources=sources, generator=generator, judge=None,
+        spec=GenerationSpec(desired_behavior="sft"), tokenizer=_FakeTokenizer(), max_tokens=512,
+        target_rows=1000, resume_from_chunk=0,
+        output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
+        concurrency_limit=4,
+    )
+
+    session.refresh(run)
+    assert run.status == "cancelled"
+    # Only the first batch (4 chunks, already in flight when cancel was set)
+    # ran — batches 2 and 3 (8 more chunks) never started. Proves the delay
+    # is bounded to "one batch," not something that grows with total chunks.
+    assert handler_calls == 4
+    output_lines = run_output_path(artifact_store.base_dir, project.id, run.id).read_text().strip().splitlines()
+    assert len(output_lines) == 4
 
 
 async def test_examples_per_chunk_generates_multiple_records_per_chunk(env):
