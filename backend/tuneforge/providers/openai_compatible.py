@@ -7,13 +7,7 @@ import uuid
 
 import httpx
 
-from tuneforge.providers.protocol import (
-    GenerationRequest,
-    GenerationResponse,
-    ProviderHealth,
-    ProviderProfile,
-    RunConsent,
-)
+from tuneforge.providers.protocol import GenerationRequest, GenerationResponse, ProviderHealth, ProviderProfile
 from tuneforge.security.credentials import get_api_key
 
 logger = logging.getLogger("tuneforge.providers")
@@ -27,10 +21,6 @@ class ProviderAuthError(RuntimeError):
 
 
 class ProviderResponseError(RuntimeError):
-    pass
-
-
-class RemoteConsentRequiredError(RuntimeError):
     pass
 
 
@@ -82,15 +72,7 @@ class OpenAICompatibleProvider:
             return ProviderHealth(healthy=True, detail="ok")
         return ProviderHealth(healthy=False, detail=f"status {response.status_code}")
 
-    async def generate(
-        self, request: GenerationRequest, consent: RunConsent | None = None
-    ) -> GenerationResponse:
-        if self.profile.endpoint_scope == "remote" and consent is None:
-            raise RemoteConsentRequiredError(
-                f"provider {self.profile.name!r} is remote; a run-specific consent "
-                "record is required before sending anything to it"
-            )
-
+    async def generate(self, request: GenerationRequest) -> GenerationResponse:
         request_id = uuid.uuid4().hex
         payload: dict = {
             "model": self.profile.model,

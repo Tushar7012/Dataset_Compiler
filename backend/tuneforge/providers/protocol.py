@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
-from typing import Literal, Protocol
+from typing import Protocol
 
 from pydantic import BaseModel
 
@@ -28,20 +26,12 @@ class ProviderProfile(BaseModel):
     name: str
     base_url: str
     model: str
-    endpoint_scope: Literal["local", "remote"]
     credential_reference: str | None = None
     timeout_seconds: float = 30.0
     max_concurrency: int = 4
     structured_output_supported: bool = False
 
 
-class RunConsent(BaseModel):
-    run_id: uuid.UUID
-    granted_at: datetime
-
-
 class ChatProvider(Protocol):
     async def health(self) -> ProviderHealth: ...
-    async def generate(
-        self, request: GenerationRequest, consent: RunConsent | None = None
-    ) -> GenerationResponse: ...
+    async def generate(self, request: GenerationRequest) -> GenerationResponse: ...

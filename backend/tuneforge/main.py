@@ -63,8 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/session")
     async def session_bootstrap():
-        """Let the SPA learn the process-generated session token, and whether
-        remote document parsing is configured server-side.
+        """Let the SPA learn the process-generated session token.
 
         Unauthenticated by design — there is no other way for the browser to
         ever obtain the token before making its first authenticated request.
@@ -72,17 +71,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request whose Origin doesn't match this app's own origin, and the
         app only ever binds to 127.0.0.1: only this machine's browser, on
         this exact origin, can reach it.
-
-        remote_parsing_enabled has to come from here, not from provider
-        endpoint_scope alone: a project can use entirely local LLM providers
-        and still need remote-parsing consent if TUNEFORGE_DOCLING_REMOTE_URL
-        is set, and the wizard has no other way to find that out before it
-        decides whether to show the consent checkbox.
         """
-        return {
-            "token": app.state.session_token,
-            "remote_parsing_enabled": bool(app.state.settings.docling_remote_url),
-        }
+        return {"token": app.state.session_token}
 
     @app.get("/api/echo-session", dependencies=[Depends(require_session)])
     async def echo_session():

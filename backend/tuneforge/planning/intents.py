@@ -12,6 +12,4 @@ class TrainingIntent(BaseModel):
         "multi_turn_conversation",
         "preference_alignment",
     ]
-    desired_behavior: str
-    language: str
     output_style: str | None = None

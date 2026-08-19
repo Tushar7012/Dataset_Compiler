@@ -99,6 +99,49 @@ button[type='submit'] {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: var(--space-4);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.card ol {
+  margin: var(--space-3) 0 0;
+  padding-left: var(--space-6);
+}
+
+.card li + li {
+  margin-top: var(--space-3);
+}
+
+.card pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.875rem;
+}
+
+.run-progress-bar {
+  width: 100%;
+  height: 12px;
+  appearance: none;
+  border: none;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--color-border);
+}
+
+.run-progress-bar::-webkit-progress-bar {
+  background: var(--color-border);
+  border-radius: var(--radius);
+}
+
+.run-progress-bar::-webkit-progress-value {
+  background: var(--color-accent);
+  border-radius: var(--radius);
+  transition: width var(--transition);
+}
+
+.run-progress-bar::-moz-progress-bar {
+  background: var(--color-accent);
+  border-radius: var(--radius);
 }
 
 @media (prefers-reduced-motion: reduce) {

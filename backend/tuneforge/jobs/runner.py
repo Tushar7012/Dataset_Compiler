@@ -17,7 +17,7 @@ from tuneforge.generation.specs import GenerationSpec
 from tuneforge.jobs.checkpoints import CHECKPOINT_ROW_INTERVAL, record_checkpoint
 from tuneforge.planning.schemas import TrainingPlan
 from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
-from tuneforge.providers.protocol import ProviderProfile, RunConsent
+from tuneforge.providers.protocol import ProviderProfile
 from tuneforge.records import SourceRecord
 from tuneforge.storage.db import create_session_factory, create_sqlite_engine
 from tuneforge.storage.models import ProviderProfileRecord, RunRecord
@@ -26,6 +26,7 @@ from tuneforge.validation.pipeline import run_validation_pipeline
 logger = logging.getLogger("tuneforge.jobs")
 
 MAX_ACCEPTED_ROWS = 100_000
+PREVIEW_ROWS = 10
 
 # ponytail: conservative starting point for concurrent chunk fan-out (DGX_plan.md
 # Part 2, Option C — HF router stays remote, only the app's own serial loop
@@ -48,7 +49,6 @@ def _load_provider(session: Session, profile_id: uuid.UUID) -> OpenAICompatibleP
         name=record.name,
         base_url=record.base_url,
         model=record.model,
-        endpoint_scope=record.endpoint_scope,
         credential_reference=record.credential_reference,
     )
     client = httpx.AsyncClient(base_url=profile.base_url, timeout=profile.timeout_seconds)
@@ -69,7 +69,6 @@ async def _run_generation_async(
     target_rows: int,
     resume_from_chunk: int,
     output_path: Path,
-    consent: RunConsent | None = None,
     concurrency_limit: int = CHUNK_CONCURRENCY_LIMIT,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,15 +89,16 @@ async def _run_generation_async(
         logger.info("run %s cancelled before start", run.id)
         return
 
+    # Populated here (not just at the end) so the live progress bar has a real
+    # denominator from the first SSE tick instead of showing "X/0" until completion.
     run.status = "running"
+    run.total_rows = min(target_rows, MAX_ACCEPTED_ROWS)
     session.commit()
 
     async def _generate_chunk(source: SourceRecord) -> list:
         generated_records = []
         for _ in range(plan.examples_per_chunk):
-            record = await generate_record(
-                plan=plan, source=source, generator=generator, judge=judge, spec=spec, consent=consent
-            )
+            record = await generate_record(plan=plan, source=source, generator=generator, judge=judge, spec=spec)
             if record is not None:
                 generated_records.append(record)
         return generated_records
@@ -146,7 +146,7 @@ async def _run_generation_async(
 
                 if generated_records:
                     report = await run_validation_pipeline(
-                        generated_records, tokenizer=tokenizer, max_tokens=max_tokens, judge=judge, consent=consent
+                        generated_records, tokenizer=tokenizer, max_tokens=max_tokens, judge=judge
                     )
                     # examples_per_chunk can produce more accepted rows than one
                     # chunk's fair share of what's left — never write past target_rows.
@@ -370,15 +370,14 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
         # any other loading failure) would kill the worker without ever setting
         # run.status to "failed", leaving the run stuck. See CLAUDE.md's known gaps.
         #
-        # Remote (DGX) parsing is only ever used when this run was granted
-        # remote consent — the API layer already refuses to create a run
-        # without it whenever remote parsing is configured (api/runs.py's
-        # _requires_remote_consent), so this check is a second line of
-        # defense, not the only gate.
+        # This app always uses a remote parser when one is configured — no
+        # per-run consent gate. Whether DGX parsing is attempted at all is
+        # purely an infra fact (is TUNEFORGE_DOCLING_REMOTE_URL set), not a
+        # per-run choice.
         from tuneforge.settings import Settings
 
         settings = Settings()
-        remote_parser_url = settings.docling_remote_url if run.remote_consent_granted_at is not None else None
+        remote_parser_url = settings.docling_remote_url
         sources = _load_project_sources(
             session, artifact_store, run.project_id, tokenizer,
             remote_parser_url=remote_parser_url,
@@ -395,14 +394,8 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
         )
         resume_from_chunk = latest.sequence if latest else 0
 
-        target_rows = 20 if run.is_preview else plan.target_rows
+        target_rows = PREVIEW_ROWS if run.is_preview else plan.target_rows
         output_path = run_output_path(artifact_store.base_dir, run.project_id, run.id)
-
-        consent = (
-            RunConsent(run_id=run.id, granted_at=run.remote_consent_granted_at)
-            if run.remote_consent_granted_at
-            else None
-        )
 
         asyncio.run(
             _run_generation_async(
@@ -418,7 +411,6 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
                 target_rows=target_rows,
                 resume_from_chunk=resume_from_chunk,
                 output_path=output_path,
-                consent=consent,
                 concurrency_limit=CHUNK_CONCURRENCY_LIMIT,
             )
         )
@@ -446,7 +438,6 @@ def run_generation_worker(*, db_path: str, base_data_dir: str, run_id: str) -> N
                         tokenizer=tokenizer.tokenizer,
                         max_tokens=model_profile.context_length or 2048,
                         judge=judge,
-                        consent=consent,
                     )
                 )
                 with output_path.open("a", encoding="utf-8") as output_file:

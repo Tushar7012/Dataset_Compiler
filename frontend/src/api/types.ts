@@ -45,8 +45,6 @@ export type TrainingGoal =
 
 export interface TrainingIntentInput {
   goal: TrainingGoal
-  desired_behavior: string
-  language: string
   target_rows: number
   generator_profile_id?: string
   judge_profile_id?: string
@@ -77,20 +75,16 @@ export interface PlanApproval {
   approved_at: string
 }
 
-export type EndpointScope = 'local' | 'remote'
-
 export interface ProviderProfileInput {
   name: string
   base_url: string
   model: string
-  endpoint_scope: EndpointScope
   api_key?: string
 }
 
 export interface ProviderProfile {
   id: string
   name: string
-  endpoint_scope: EndpointScope
 }
 
 export type RunStatus = 'pending' | 'running' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed'
@@ -138,10 +132,4 @@ export interface RowEstimateResponse {
   total_rows: number
   truncated: boolean
   capped_at: number
-}
-
-export interface GoalSuggestionResponse {
-  goal: TrainingGoal
-  rationale: string
-  desired_behavior: string
 }

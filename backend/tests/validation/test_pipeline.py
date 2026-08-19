@@ -22,7 +22,7 @@ def _metadata() -> RecordMetadata:
 def _provider(handler) -> OpenAICompatibleProvider:
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:9999")
-    profile = ProviderProfile(name="judge", base_url="http://127.0.0.1:9999", model="judge-model", endpoint_scope="local")
+    profile = ProviderProfile(name="judge", base_url="http://127.0.0.1:9999", model="judge-model")
     return OpenAICompatibleProvider(profile, client)
 
 

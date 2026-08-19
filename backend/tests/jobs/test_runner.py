@@ -12,7 +12,7 @@ from tuneforge.jobs.checkpoints import get_latest_checkpoint
 from tuneforge.jobs.runner import MAX_ACCEPTED_ROWS, _run_generation_async, run_generation_worker, run_output_path
 from tuneforge.planning.schemas import TrainingPlan
 from tuneforge.providers.openai_compatible import OpenAICompatibleProvider, ProviderAuthError
-from tuneforge.providers.protocol import ProviderProfile, RunConsent
+from tuneforge.providers.protocol import ProviderProfile
 from tuneforge.records import SourceRecord
 from tuneforge.storage.artifacts import ArtifactStore
 from tuneforge.storage.db import create_session_factory, create_sqlite_engine
@@ -28,7 +28,7 @@ class _FakeTokenizer:
 def _provider(handler) -> OpenAICompatibleProvider:
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:9999")
-    profile = ProviderProfile(name="gen", base_url="http://127.0.0.1:9999", model="test-model", endpoint_scope="local")
+    profile = ProviderProfile(name="gen", base_url="http://127.0.0.1:9999", model="test-model")
     return OpenAICompatibleProvider(profile, client)
 
 
@@ -91,7 +91,7 @@ def env(tmp_path: Path):
     )
     provider_record = ProviderProfileRecord(
         id=uuid.uuid4(), project_id=project.id, name="gen", base_url="http://127.0.0.1:9999",
-        model="test-model", endpoint_scope="local",
+        model="test-model",
     )
     model_profile_record = ModelProfileRecord(
         id=uuid.uuid4(), project_id=project.id, model_id="gpt2", source="huggingface",
@@ -437,96 +437,8 @@ async def test_examples_per_chunk_is_capped_at_target_rows(env):
     assert len(output_lines) == 2
 
 
-async def test_run_forwards_consent_to_generate_record(env, monkeypatch):
+def test_worker_passes_remote_parser_url_and_token_when_configured(env, monkeypatch):
     session, artifact_store, project, run = env
-    granted_at = datetime.now(timezone.utc)
-    run.remote_consent_granted_at = granted_at
-    session.commit()
-
-    captured = {}
-
-    async def fake_generate_record(*, plan, source, generator, judge, spec, consent=None):
-        captured["consent"] = consent
-        return None
-
-    monkeypatch.setattr("tuneforge.jobs.runner.generate_record", fake_generate_record)
-
-    await _run_generation_async(
-        session=session, run=run, plan=_cpt_plan(), sources=_sources(uuid.uuid4(), 1),
-        generator=_provider(lambda request: (_ for _ in ()).throw(AssertionError("not expected"))),
-        judge=None, spec=GenerationSpec(desired_behavior="cpt"), tokenizer=_FakeTokenizer(), max_tokens=512,
-        target_rows=1000, resume_from_chunk=0,
-        output_path=run_output_path(artifact_store.base_dir, project.id, run.id),
-        consent=RunConsent(run_id=run.id, granted_at=granted_at),
-    )
-
-    assert captured["consent"] is not None
-    assert captured["consent"].run_id == run.id
-    assert captured["consent"].granted_at.replace(tzinfo=None) == granted_at.replace(tzinfo=None)
-
-
-def test_worker_builds_consent_from_the_runs_remote_consent_timestamp(env, monkeypatch):
-    session, artifact_store, project, run = env
-    granted_at = datetime.now(timezone.utc)
-    run.remote_consent_granted_at = granted_at
-    session.commit()
-    db_path = session.get_bind().url.database
-    session.close()
-
-    captured = {}
-
-    class _FakeTok:
-        tokenizer = object()
-
-    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
-    monkeypatch.setattr(
-        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer, **kwargs: []
-    )
-    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
-
-    async def fake_run_generation_async(**kwargs):
-        captured["consent"] = kwargs.get("consent")
-
-    monkeypatch.setattr("tuneforge.jobs.runner._run_generation_async", fake_run_generation_async)
-
-    run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
-
-    assert captured["consent"] is not None
-    assert captured["consent"].run_id == run.id
-    assert captured["consent"].granted_at.replace(tzinfo=None) == granted_at.replace(tzinfo=None)
-
-
-def test_worker_builds_no_consent_when_none_was_granted(env, monkeypatch):
-    session, artifact_store, project, run = env
-    db_path = session.get_bind().url.database
-    session.close()
-
-    captured = {}
-
-    class _FakeTok:
-        tokenizer = object()
-
-    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
-    monkeypatch.setattr(
-        "tuneforge.jobs.runner._load_project_sources", lambda session, artifact_store, project_id, tokenizer, **kwargs: []
-    )
-    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
-
-    async def fake_run_generation_async(**kwargs):
-        captured["consent"] = kwargs.get("consent")
-
-    monkeypatch.setattr("tuneforge.jobs.runner._run_generation_async", fake_run_generation_async)
-
-    run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
-
-    assert captured["consent"] is None
-
-
-def test_worker_passes_remote_parser_url_and_token_when_consent_granted(env, monkeypatch):
-    session, artifact_store, project, run = env
-    granted_at = datetime.now(timezone.utc)
-    run.remote_consent_granted_at = granted_at
-    session.commit()
     db_path = session.get_bind().url.database
     session.close()
 
@@ -556,37 +468,6 @@ def test_worker_passes_remote_parser_url_and_token_when_consent_granted(env, mon
 
     assert captured.get("remote_parser_url") == "http://dgx:9000"
     assert captured.get("remote_parser_token") == "test-bearer-value"
-
-
-def test_worker_does_not_use_remote_parser_without_consent_even_if_configured(env, monkeypatch):
-    session, artifact_store, project, run = env  # run.remote_consent_granted_at is None by default
-    db_path = session.get_bind().url.database
-    session.close()
-
-    monkeypatch.setenv("TUNEFORGE_DOCLING_REMOTE_URL", "http://dgx:9000")
-
-    captured = {}
-
-    class _FakeTok:
-        tokenizer = object()
-
-    monkeypatch.setattr("tuneforge.ingestion.chunking.build_tokenizer", lambda model_id: _FakeTok())
-
-    def fake_load_sources(session, artifact_store, project_id, tokenizer, **kwargs):
-        captured.update(kwargs)
-        return []
-
-    monkeypatch.setattr("tuneforge.jobs.runner._load_project_sources", fake_load_sources)
-    monkeypatch.setattr("tuneforge.jobs.runner._load_provider", lambda session, profile_id: object())
-
-    async def fake_run_generation_async(**kwargs):
-        return None
-
-    monkeypatch.setattr("tuneforge.jobs.runner._run_generation_async", fake_run_generation_async)
-
-    run_generation_worker(db_path=db_path, base_data_dir=str(artifact_store.base_dir), run_id=str(run.id))
-
-    assert captured.get("remote_parser_url") is None
 
 
 def test_worker_marks_run_failed_on_unhandled_exception(env, monkeypatch):

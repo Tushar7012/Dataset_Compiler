@@ -1,15 +1,17 @@
+/* YouTube-style black-and-red theme — a deliberate fixed brand look, not an
+   adaptive light/dark pair, so the dark-scheme block below only deepens the
+   same palette rather than switching to a light one. */
 :root {
-  /* Neutral scale (light mode) */
-  --color-bg: #ffffff;
-  --color-surface: #f8fafc;
-  --color-border: #e2e8f0;
-  --color-text: #0f172a;
-  --color-text-muted: #475569;
-  /* #16a34a + white = 3.30:1 (fails AA); #15803d + white = 5.02:1 */
-  --color-accent: #15803d;
+  --color-bg: #0a0a0a;
+  --color-surface: #262626;
+  --color-border: #4d4d4d;
+  --color-text: #f1f1f1;
+  --color-text-muted: #aaaaaa;
+  /* #cc0000 + white = 5.89:1 (passes AA) */
+  --color-accent: #cc0000;
   --color-accent-contrast: #ffffff;
-  --color-danger: #dc2626;
-  --color-danger-bg: #fef2f2;
+  --color-danger: #ff6b6b;
+  --color-danger-bg: #2a0f0f;
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -25,14 +27,15 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg: #0f172a;
-    --color-surface: #1e293b;
-    --color-border: #334155;
-    --color-text: #f8fafc;
-    --color-text-muted: #94a3b8;
-    --color-accent: #22c55e;
-    --color-accent-contrast: #052e12;
-    --color-danger: #f87171;
-    --color-danger-bg: #2a1215;
+    --color-bg: #0a0a0a;
+    --color-surface: #262626;
+    --color-border: #4d4d4d;
+    --color-text: #f1f1f1;
+    --color-text-muted: #aaaaaa;
+    /* #e62117 + white = 4.59:1 (passes AA) */
+    --color-accent: #e62117;
+    --color-accent-contrast: #ffffff;
+    --color-danger: #ff6b6b;
+    --color-danger-bg: #2a0f0f;
   }
 }

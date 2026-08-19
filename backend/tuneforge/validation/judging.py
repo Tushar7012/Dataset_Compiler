@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from tuneforge.providers.openai_compatible import OpenAICompatibleProvider, extract_json_object
-from tuneforge.providers.protocol import GenerationRequest, RunConsent
+from tuneforge.providers.protocol import GenerationRequest
 from tuneforge.records import DPORecord
 from tuneforge.validation.structural import render_record_text
 
@@ -15,7 +15,6 @@ async def judge_quality(
     record,
     *,
     pass_threshold: float = 6.0,
-    consent: RunConsent | None = None,
 ) -> bool:
     """A general quality gate: does this training example look coherent and
     useful? Used as an optional pass for SFT/CPT (PLAN.md: judging is
@@ -28,10 +27,7 @@ async def judge_quality(
         f"{text}\n\n"
         'Respond with only a JSON object: {"score": <number 0-10>}'
     )
-    response = await judge.generate(
-        GenerationRequest(messages=[{"role": "user", "content": prompt}]),
-        consent=consent,
-    )
+    response = await judge.generate(GenerationRequest(messages=[{"role": "user", "content": prompt}]))
     try:
         data = extract_json_object(response.content)
         score = float(data["score"])
@@ -45,7 +41,6 @@ async def judge_dpo_preference(
     record: DPORecord,
     *,
     margin: float = 1.0,
-    consent: RunConsent | None = None,
 ) -> bool:
     """DPO-specific and mandatory (PLAN.md): an *independent* re-check that
     chosen is actually better than rejected. Separate from whatever judging
@@ -61,10 +56,7 @@ async def judge_dpo_preference(
         f"PROMPT: {prompt_text}\n\nANSWER A: {chosen_text}\n\nANSWER B: {rejected_text}\n\n"
         'Respond with only a JSON object: {"score_a": <0-10>, "score_b": <0-10>}'
     )
-    response = await judge.generate(
-        GenerationRequest(messages=[{"role": "user", "content": prompt}]),
-        consent=consent,
-    )
+    response = await judge.generate(GenerationRequest(messages=[{"role": "user", "content": prompt}]))
     try:
         data = extract_json_object(response.content)
         score_a = float(data["score_a"])

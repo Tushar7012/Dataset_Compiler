@@ -6,7 +6,6 @@ interface CreatePreviewInput {
   planId: string
   generatorProfileId: string
   judgeProfileId?: string
-  remoteConsent?: boolean
 }
 
 export function createPreview(input: CreatePreviewInput): Promise<RunCreated> {
@@ -16,16 +15,12 @@ export function createPreview(input: CreatePreviewInput): Promise<RunCreated> {
       plan_id: input.planId,
       generator_profile_id: input.generatorProfileId,
       judge_profile_id: input.judgeProfileId,
-      remote_consent: input.remoteConsent,
     },
   })
 }
 
-export function approveFull(runId: string, remoteConsent?: boolean): Promise<RunCreated> {
-  return apiFetch<RunCreated>(`/api/runs/${runId}/approve-full`, {
-    method: 'POST',
-    json: { remote_consent: remoteConsent },
-  })
+export function approveFull(runId: string): Promise<RunCreated> {
+  return apiFetch<RunCreated>(`/api/runs/${runId}/approve-full`, { method: 'POST' })
 }
 
 export function getRun(runId: string): Promise<RunSummary> {

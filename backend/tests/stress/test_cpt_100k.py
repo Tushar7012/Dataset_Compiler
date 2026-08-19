@@ -98,7 +98,6 @@ def test_cpt_100k_crash_resume_memory_bounded(tmp_path: Path, fast_validation):
         name="unused-for-cpt",
         base_url="http://127.0.0.1:9/v1",
         model="none",
-        endpoint_scope="local",
     )
     session.add(provider)
     session.commit()
@@ -135,7 +134,6 @@ def test_cpt_100k_crash_resume_memory_bounded(tmp_path: Path, fast_validation):
             target_rows=40_000,
             resume_from_chunk=0,
             output_path=output_path,
-            consent=None,
         )
 
     asyncio.run(run_partial())
@@ -171,7 +169,6 @@ def test_cpt_100k_crash_resume_memory_bounded(tmp_path: Path, fast_validation):
             target_rows=TARGET,
             resume_from_chunk=resume_from,
             output_path=output_path,
-            consent=None,
         )
 
     asyncio.run(resume_to_cap())

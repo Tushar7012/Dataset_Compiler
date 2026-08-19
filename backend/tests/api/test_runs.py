@@ -1,6 +1,5 @@
 import json
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -43,7 +42,7 @@ def _make_plan_and_provider(client, project_id):
     )
     provider = ProviderProfileRecord(
         id=uuid.uuid4(), project_id=project_id, name="gen", base_url="http://127.0.0.1:9999",
-        model="test-model", endpoint_scope="local",
+        model="test-model",
     )
     session.add_all([plan, provider])
     session.commit()
@@ -276,166 +275,6 @@ def test_preview_creates_a_run_with_is_preview_true(client, monkeypatch):
     assert stored.is_preview is True
 
 
-def _make_remote_provider(client, project_id):
-    session = _session(client)
-    provider = ProviderProfileRecord(
-        id=uuid.uuid4(), project_id=project_id, name="openai", base_url="https://api.openai.com/v1",
-        model="gpt-4", endpoint_scope="remote",
-    )
-    session.add(provider)
-    session.commit()
-    return provider
-
-
-def test_preview_rejects_remote_generator_without_consent(client):
-    session = _session(client)
-    project = ProjectRepository(session, client.artifact_store).create("proj")
-    plan, _local_provider = _make_plan_and_provider(client, project.id)
-    remote_provider = _make_remote_provider(client, project.id)
-
-    response = client.post(
-        "/api/runs/preview",
-        json={"plan_id": str(plan.id), "generator_profile_id": str(remote_provider.id)},
-    )
-
-    assert response.status_code == 422
-    assert "consent" in response.json()["detail"].lower()
-
-
-def test_preview_accepts_remote_generator_with_consent_and_stores_the_timestamp(client, monkeypatch):
-    monkeypatch.setattr("tuneforge.api.runs.start_run", lambda **kwargs: None)
-
-    session = _session(client)
-    project = ProjectRepository(session, client.artifact_store).create("proj")
-    plan, _local_provider = _make_plan_and_provider(client, project.id)
-    remote_provider = _make_remote_provider(client, project.id)
-
-    response = client.post(
-        "/api/runs/preview",
-        json={"plan_id": str(plan.id), "generator_profile_id": str(remote_provider.id), "remote_consent": True},
-    )
-
-    assert response.status_code == 201
-    session = _session(client)
-    stored = session.get(RunRecord, uuid.UUID(response.json()["id"]))
-    assert stored.remote_consent_granted_at is not None
-
-
-def test_preview_rejects_remote_judge_without_consent_even_when_generator_is_local(client):
-    session = _session(client)
-    project = ProjectRepository(session, client.artifact_store).create("proj")
-    plan, local_provider = _make_plan_and_provider(client, project.id)
-    remote_judge = _make_remote_provider(client, project.id)
-
-    response = client.post(
-        "/api/runs/preview",
-        json={
-            "plan_id": str(plan.id),
-            "generator_profile_id": str(local_provider.id),
-            "judge_profile_id": str(remote_judge.id),
-        },
-    )
-
-    assert response.status_code == 422
-    assert "consent" in response.json()["detail"].lower()
-
-
-def test_approve_full_rejects_remote_generator_without_consent(client, monkeypatch):
-    monkeypatch.setattr("tuneforge.api.runs.start_run", lambda **kwargs: None)
-
-    session = _session(client)
-    project = ProjectRepository(session, client.artifact_store).create("proj")
-    plan, _local_provider = _make_plan_and_provider(client, project.id)
-    remote_provider = _make_remote_provider(client, project.id)
-    preview_run = RunRecord(
-        id=uuid.uuid4(), project_id=project.id, plan_id=plan.id, generator_profile_id=remote_provider.id,
-        is_preview=True, status="completed", remote_consent_granted_at=datetime.now(timezone.utc),
-    )
-    session = _session(client)
-    session.add(preview_run)
-    session.commit()
-    client.post(f"/api/plans/{plan.id}/approve")
-
-    response = client.post(f"/api/runs/{preview_run.id}/approve-full")
-
-    assert response.status_code == 422
-    assert "consent" in response.json()["detail"].lower()
-
-
-def test_approve_full_accepts_remote_generator_with_consent_and_stores_the_timestamp(client, monkeypatch):
-    monkeypatch.setattr("tuneforge.api.runs.start_run", lambda **kwargs: None)
-
-    session = _session(client)
-    project = ProjectRepository(session, client.artifact_store).create("proj")
-    plan, _local_provider = _make_plan_and_provider(client, project.id)
-    remote_provider = _make_remote_provider(client, project.id)
-    preview_run = RunRecord(
-        id=uuid.uuid4(), project_id=project.id, plan_id=plan.id, generator_profile_id=remote_provider.id,
-        is_preview=True, status="completed", remote_consent_granted_at=datetime.now(timezone.utc),
-    )
-    session = _session(client)
-    session.add(preview_run)
-    session.commit()
-    client.post(f"/api/plans/{plan.id}/approve")
-
-    response = client.post(f"/api/runs/{preview_run.id}/approve-full", json={"remote_consent": True})
-
-    assert response.status_code == 200
-    session = _session(client)
-    full_run = session.get(RunRecord, uuid.UUID(response.json()["id"]))
-    assert full_run.remote_consent_granted_at is not None
-
-
-def test_preview_requires_consent_when_remote_parsing_configured_even_with_local_providers(client):
-    from tuneforge.settings import Settings
-
-    client.app.state.settings = Settings(docling_remote_url="http://dgx:9000")
-    session = _session(client)
-    project = ProjectRepository(session, client.artifact_store).create("proj")
-    plan, local_provider = _make_plan_and_provider(client, project.id)
-
-    response = client.post(
-        "/api/runs/preview",
-        json={"plan_id": str(plan.id), "generator_profile_id": str(local_provider.id)},
-    )
-
-    assert response.status_code == 422
-    assert "consent" in response.json()["detail"].lower()
-
-
-def test_preview_accepts_local_providers_with_consent_when_remote_parsing_configured(client, monkeypatch):
-    from tuneforge.settings import Settings
-
-    monkeypatch.setattr("tuneforge.api.runs.start_run", lambda **kwargs: None)
-    client.app.state.settings = Settings(docling_remote_url="http://dgx:9000")
-    session = _session(client)
-    project = ProjectRepository(session, client.artifact_store).create("proj")
-    plan, local_provider = _make_plan_and_provider(client, project.id)
-
-    response = client.post(
-        "/api/runs/preview",
-        json={"plan_id": str(plan.id), "generator_profile_id": str(local_provider.id), "remote_consent": True},
-    )
-
-    assert response.status_code == 201
-    session = _session(client)
-    stored = session.get(RunRecord, uuid.UUID(response.json()["id"]))
-    assert stored.remote_consent_granted_at is not None
-
-
-def test_preview_does_not_require_consent_when_remote_parsing_not_configured(client):
-    session = _session(client)
-    project = ProjectRepository(session, client.artifact_store).create("proj")
-    plan, local_provider = _make_plan_and_provider(client, project.id)
-
-    response = client.post(
-        "/api/runs/preview",
-        json={"plan_id": str(plan.id), "generator_profile_id": str(local_provider.id)},
-    )
-
-    assert response.status_code == 201
-
-
 def test_list_run_records_returns_up_to_limit_accepted_rows(client):
     session = _session(client)
     project = ProjectRepository(session, client.artifact_store).create("proj")
@@ -445,7 +284,7 @@ def test_list_run_records_returns_up_to_limit_accepted_rows(client):
     )
     provider = ProviderProfileRecord(
         id=uuid.uuid4(), project_id=project.id, name="gen", base_url="http://127.0.0.1:9999",
-        model="test-model", endpoint_scope="local",
+        model="test-model",
     )
     session.add_all([plan, provider])
     session.commit()

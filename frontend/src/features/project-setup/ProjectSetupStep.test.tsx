@@ -30,60 +30,54 @@ const mockGetSourceSchema = vi.mocked(getSourceSchema)
 
 describe('ProjectSetupStep', () => {
   beforeEach(() => {
+    mockCreateProject.mockClear()
     // Default every upload to "this is a document" (a 422 from the schema probe)
     // so existing document-upload behavior stays exactly as before unless a
     // test explicitly overrides this to simulate a structured file.
     mockGetSourceSchema.mockRejectedValue(new ApiError(422, "unsupported structured format '.md'"))
   })
 
-  it('shows only the project name form initially', () => {
+  it('shows the Setting up heading initially, before the project resolves', () => {
+    mockCreateProject.mockReturnValue(new Promise(() => {}))
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
 
-    expect(screen.getByLabelText(/project name/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /setting up/i })).toBeInTheDocument()
     expect(screen.queryByLabelText(/upload/i)).not.toBeInTheDocument()
   })
 
   it('has no axe-detectable accessibility violations', async () => {
+    mockCreateProject.mockResolvedValue({ id: 'proj-1', name: 'HR Policy Bot', created_at: '2026-08-15T00:00:00Z' })
     const { container } = renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
-    await screen.findByLabelText(/project name/i)
+    await screen.findByRole('heading', { name: /upload sources/i })
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   }, 10_000)
 
   it('moves focus to the step heading on mount', () => {
+    mockCreateProject.mockReturnValue(new Promise(() => {}))
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
-    expect(screen.getByRole('heading', { name: /project setup/i })).toHaveFocus()
+    expect(screen.getByRole('heading', { name: /setting up/i })).toHaveFocus()
   })
 
-  it('moves focus to the upload heading after the project is created', async () => {
-    const user = userEvent.setup()
+  it('automatically creates the project and reveals the upload form without any user interaction', async () => {
     mockCreateProject.mockResolvedValue({ id: 'proj-1', name: 'HR Policy Bot', created_at: '2026-08-15T00:00:00Z' })
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
 
-    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
-    await user.click(screen.getByRole('button', { name: /create project/i }))
-
     expect(await screen.findByRole('heading', { name: /upload sources/i })).toHaveFocus()
+    expect(mockCreateProject).toHaveBeenCalledTimes(1)
   })
 
   it('creates the project and reveals the upload form', async () => {
-    const user = userEvent.setup()
     mockCreateProject.mockResolvedValue({ id: 'proj-1', name: 'HR Policy Bot', created_at: '2026-08-15T00:00:00Z' })
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
 
-    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
-    await user.click(screen.getByRole('button', { name: /create project/i }))
-
     expect(await screen.findByLabelText(/upload/i)).toBeInTheDocument()
-    expect(mockCreateProject).toHaveBeenCalledWith('HR Policy Bot')
+    expect(mockCreateProject).toHaveBeenCalled()
   })
 
-  it('shows a validation error when project creation fails', async () => {
-    const user = userEvent.setup()
+  it('shows an alert with the error message when project creation fails', async () => {
     mockCreateProject.mockRejectedValue(new ApiError(422, "'name' is required"))
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
-
-    await user.click(screen.getByRole('button', { name: /create project/i }))
 
     expect(await screen.findByText("'name' is required")).toBeInTheDocument()
   })
@@ -94,8 +88,6 @@ describe('ProjectSetupStep', () => {
     mockUploadSource.mockResolvedValue({ id: 'src-1', filename: 'policy.md', source_hash: 'abc' })
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
 
-    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
-    await user.click(screen.getByRole('button', { name: /create project/i }))
     const fileInput = await screen.findByLabelText(/upload/i)
     const file = new File(['# Policy'], 'policy.md', { type: 'text/markdown' })
     await user.upload(fileInput, file)
@@ -106,12 +98,8 @@ describe('ProjectSetupStep', () => {
   })
 
   it('disables Continue until at least one source is uploaded', async () => {
-    const user = userEvent.setup()
     mockCreateProject.mockResolvedValue({ id: 'proj-1', name: 'HR Policy Bot', created_at: '2026-08-15T00:00:00Z' })
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
-
-    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
-    await user.click(screen.getByRole('button', { name: /create project/i }))
 
     expect(await screen.findByRole('button', { name: /continue/i })).toBeDisabled()
   })
@@ -124,8 +112,6 @@ describe('ProjectSetupStep', () => {
     const onProjectReady = vi.fn()
     renderWithProviders(<ProjectSetupStep onProjectReady={onProjectReady} />)
 
-    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
-    await user.click(screen.getByRole('button', { name: /create project/i }))
     const fileInput = await screen.findByLabelText(/upload/i)
     await user.upload(fileInput, new File(['# Policy'], 'policy.md', { type: 'text/markdown' }))
     await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled())
@@ -144,8 +130,6 @@ describe('ProjectSetupStep', () => {
     })
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
 
-    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
-    await user.click(screen.getByRole('button', { name: /create project/i }))
     const fileInput = await screen.findByLabelText(/upload/i)
     await user.upload(fileInput, new File(['prompt,completion'], 'data.csv', { type: 'text/csv' }))
 
@@ -163,8 +147,6 @@ describe('ProjectSetupStep', () => {
     mockUploadSource.mockResolvedValue({ id: 'src-1', filename: 'policy.md', source_hash: 'abc' })
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
 
-    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
-    await user.click(screen.getByRole('button', { name: /create project/i }))
     const fileInput = await screen.findByLabelText(/upload/i)
     await user.upload(fileInput, new File(['# Policy'], 'policy.md', { type: 'text/markdown' }))
 
@@ -179,8 +161,6 @@ describe('ProjectSetupStep', () => {
     mockGetSourceSchema.mockRejectedValueOnce(new ApiError(500, 'internal server error'))
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
 
-    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
-    await user.click(screen.getByRole('button', { name: /create project/i }))
     const fileInput = await screen.findByLabelText(/upload/i)
     await user.upload(fileInput, new File(['prompt,completion'], 'data.csv', { type: 'text/csv' }))
 
@@ -206,8 +186,6 @@ describe('ProjectSetupStep', () => {
     )
     renderWithProviders(<ProjectSetupStep onProjectReady={vi.fn()} />)
 
-    await user.type(screen.getByLabelText(/project name/i), 'HR Policy Bot')
-    await user.click(screen.getByRole('button', { name: /create project/i }))
     const fileInput = await screen.findByLabelText(/upload/i)
     await user.upload(fileInput, new File(['prompt,completion'], 'data.csv', { type: 'text/csv' }))
 

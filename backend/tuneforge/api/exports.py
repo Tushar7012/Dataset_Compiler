@@ -10,13 +10,10 @@ from sqlalchemy.orm import Session
 
 from tuneforge.api.deps import get_artifact_store, get_session
 from tuneforge.export.bundle import export_bundle, load_records_from_jsonl
-from tuneforge.export.splitting import split_train_eval
 from tuneforge.jobs.runner import run_output_path
-from tuneforge.models.analyzer import ModelProfile
 from tuneforge.planning.schemas import TrainingPlan
 from tuneforge.storage.artifacts import ArtifactStore
-from tuneforge.storage.models import ModelProfileRecord, RunRecord, TrainingPlanRecord
-from tuneforge.validation.pipeline import ValidationReport
+from tuneforge.storage.models import RunRecord, TrainingPlanRecord
 
 router = APIRouter()
 
@@ -40,26 +37,11 @@ async def create_export(
     plan_record = session.get(TrainingPlanRecord, run.plan_id)
     plan = TrainingPlan.model_validate(plan_record.plan_json)
 
-    model_profile_record = (
-        session.query(ModelProfileRecord)
-        .filter(ModelProfileRecord.project_id == run.project_id)
-        .order_by(ModelProfileRecord.created_at.desc())
-        .first()
-    )
-    if model_profile_record is None:
-        raise HTTPException(status_code=409, detail="no analyzed model found for this project")
-    model_profile = ModelProfile.model_validate(model_profile_record.profile_json)
-
     output_path = run_output_path(artifact_store.base_dir, run.project_id, run.id)
     records = load_records_from_jsonl(output_path, plan.canonical_schema)
-    split = split_train_eval(records)
 
-    report = ValidationReport(accepted=records, rejection_counts={}, assurance_level=run.assurance_level or "lower_assurance")
     export_dir = _export_dir(artifact_store, run)
-    export_bundle(
-        train=split.train, eval_records=split.eval, output_dir=export_dir,
-        model_profile=model_profile, plan=plan, validation_report=report,
-    )
+    export_bundle(records=records, output_dir=export_dir)
 
     return {"run_id": str(run.id), "export_dir": str(export_dir)}
 

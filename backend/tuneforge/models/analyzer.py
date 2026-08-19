@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from huggingface_hub import hf_hub_download, list_repo_files
+from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
 from huggingface_hub.utils import EntryNotFoundError, GatedRepoError, LocalEntryNotFoundError
 from pydantic import BaseModel
 
@@ -115,6 +116,12 @@ def analyze_model(
         raise GatedModelError(f"{model_id} is gated; request access on Hugging Face first") from exc
     except LocalEntryNotFoundError as exc:
         raise ModelNotAccessibleError(f"{model_id} is unreachable (offline and not cached)") from exc
+    except RepositoryNotFoundError as exc:
+        raise ModelNotAccessibleError(f"{model_id!r} was not found on Hugging Face — check the model id") from exc
+    except HFValidationError as exc:
+        raise ModelNotAccessibleError(
+            f"{model_id!r} is not a valid Hugging Face repo id — expected 'org/model-name' with no spaces"
+        ) from exc
 
     if config is None:
         if source == "huggingface" and _has_gguf_file(model_id):

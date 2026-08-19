@@ -1,12 +1,11 @@
 import json
 import uuid
-from datetime import datetime, timezone
 
 import httpx
 import pytest
 
 from tuneforge.providers.openai_compatible import OpenAICompatibleProvider
-from tuneforge.providers.protocol import ProviderProfile, RunConsent
+from tuneforge.providers.protocol import ProviderProfile
 from tuneforge.records import ChatMessage, CPTRecord, DPORecord, RecordMetadata
 from tuneforge.validation.judging import JudgingError, judge_dpo_preference, judge_quality
 
@@ -15,10 +14,10 @@ def _metadata() -> RecordMetadata:
     return RecordMetadata(document_id=uuid.uuid4(), source_name="doc.md", source_hash="deadbeef")
 
 
-def _provider(handler, *, endpoint_scope="local") -> OpenAICompatibleProvider:
+def _provider(handler) -> OpenAICompatibleProvider:
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:9999")
-    profile = ProviderProfile(name="judge", base_url="http://127.0.0.1:9999", model="judge-model", endpoint_scope=endpoint_scope)
+    profile = ProviderProfile(name="judge", base_url="http://127.0.0.1:9999", model="judge-model")
     return OpenAICompatibleProvider(profile, client)
 
 
@@ -119,18 +118,3 @@ async def test_judge_dpo_preference_tolerates_a_thinking_model_wrapping_its_answ
         metadata=_metadata(),
     )
     assert await judge_dpo_preference(judge, record, margin=1.0) is True
-
-
-async def test_judge_dpo_preference_forwards_consent_to_remote_judge():
-    def handler(request):
-        return _chat_response({"score_a": 9, "score_b": 3})
-
-    judge = _provider(handler, endpoint_scope="remote")
-    record = DPORecord(
-        prompt=[ChatMessage(role="user", content="q")],
-        chosen=[ChatMessage(role="assistant", content="good")],
-        rejected=[ChatMessage(role="assistant", content="bad")],
-        metadata=_metadata(),
-    )
-    consent = RunConsent(run_id=uuid.uuid4(), granted_at=datetime.now(timezone.utc))
-    assert await judge_dpo_preference(judge, record, consent=consent) is True

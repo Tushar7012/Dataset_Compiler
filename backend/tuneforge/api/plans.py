@@ -19,7 +19,7 @@ from tuneforge.planning.planner import (
     recommend_plan,
 )
 from tuneforge.providers.openai_compatible import OpenAICompatibleProvider, ProviderAuthError, ProviderResponseError
-from tuneforge.providers.protocol import GenerationRequest, ProviderProfile, RunConsent
+from tuneforge.providers.protocol import GenerationRequest, ProviderProfile
 from tuneforge.research.official_sources import fetch_model_card_readme, fetch_source, model_card_url
 from tuneforge.research.resolver import resolve_rejected_recommendation
 from tuneforge.security.credentials import CredentialNotFoundError
@@ -66,14 +66,13 @@ def _gemini_provider() -> OpenAICompatibleProvider:
         name="gemini-goal-suggestion",
         base_url=_GEMINI_BASE_URL,
         model=_GEMINI_GOAL_SUGGESTION_MODEL,
-        endpoint_scope="remote",
         credential_reference=GEMINI_API_KEY_CREDENTIAL_NAME,
     )
     client = httpx.AsyncClient(base_url=profile.base_url, timeout=profile.timeout_seconds)
     return OpenAICompatibleProvider(profile, client)
 
 
-async def _suggest_goal_from_text(provider: OpenAICompatibleProvider, text: str, consent: RunConsent) -> dict:
+async def _suggest_goal_from_text(provider: OpenAICompatibleProvider, text: str) -> dict:
     prompt = (
         "You are classifying a document to choose the best fine-tuning goal.\n"
         f"Pick exactly one goal from this list: {sorted(_VALID_GOALS)}.\n\n"
@@ -82,8 +81,7 @@ async def _suggest_goal_from_text(provider: OpenAICompatibleProvider, text: str,
         '"rationale": "<one sentence>", "desired_behavior": "<one sentence>"}'
     )
     response = await provider.generate(
-        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}),
-        consent=consent,
+        GenerationRequest(messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
     )
     try:
         data = json.loads(response.content)
@@ -99,7 +97,7 @@ async def _suggest_goal_from_text(provider: OpenAICompatibleProvider, text: str,
 
 @router.post("/plans/recommend")
 async def recommend(payload: dict, session: Session = Depends(get_session)):
-    required = ("project_id", "model_profile_id", "goal", "desired_behavior", "language", "target_rows")
+    required = ("project_id", "model_profile_id", "goal", "target_rows")
     missing = [field for field in required if payload.get(field) is None]
     if missing:
         raise HTTPException(status_code=422, detail=f"missing required field(s): {missing}")
@@ -109,9 +107,7 @@ async def recommend(payload: dict, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="model profile not found — analyze a model first")
     model_profile = ModelProfile.model_validate(model_profile_record.profile_json)
 
-    intent = TrainingIntent(
-        goal=payload["goal"], desired_behavior=payload["desired_behavior"], language=payload["language"]
-    )
+    intent = TrainingIntent(goal=payload["goal"])
 
     try:
         plan = recommend_plan(
@@ -213,10 +209,9 @@ async def suggest_goal(
             detail="no document source with extractable text available — upload a document source first"
         )
 
-    consent = RunConsent(run_id=uuid.uuid4(), granted_at=datetime.now(timezone.utc))
     provider = _gemini_provider()
     try:
-        return await _suggest_goal_from_text(provider, text_sample, consent)
+        return await _suggest_goal_from_text(provider, text_sample)
     except CredentialNotFoundError as exc:
         raise HTTPException(status_code=422, detail=f"Gemini credential not configured: {exc}") from exc
     except (ProviderAuthError, ProviderResponseError, GoalSuggestionError) as exc:
@@ -254,7 +249,7 @@ async def research(plan_id: uuid.UUID, payload: dict, session: Session = Depends
     if rejected_plan is None:
         raise HTTPException(status_code=404, detail=f"plan not found: {plan_id}")
 
-    required = ("project_id", "model_profile_id", "goal", "desired_behavior", "language", "target_rows")
+    required = ("project_id", "model_profile_id", "goal", "target_rows")
     missing = [field for field in required if payload.get(field) is None]
     if missing:
         raise HTTPException(status_code=422, detail=f"missing required field(s): {missing}")
@@ -264,9 +259,7 @@ async def research(plan_id: uuid.UUID, payload: dict, session: Session = Depends
         raise HTTPException(status_code=404, detail="model profile not found — analyze a model first")
     model_profile = ModelProfile.model_validate(model_profile_record.profile_json)
 
-    intent = TrainingIntent(
-        goal=payload["goal"], desired_behavior=payload["desired_behavior"], language=payload["language"]
-    )
+    intent = TrainingIntent(goal=payload["goal"])
 
     async with httpx.AsyncClient() as client:
         try:

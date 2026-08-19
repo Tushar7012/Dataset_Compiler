@@ -52,17 +52,6 @@ export function ExportStep({ runId }: ExportStepProps) {
       </div>
       {downloaded && <p>Export downloaded.</p>}
       {error && <p role="alert">{error}</p>}
-
-      <div className="card">
-        <h3>Using this in Unsloth</h3>
-        <p>
-          Load the exported Parquet/JSONL files with Hugging Face <code>datasets</code> (
-          <code>load_dataset(&quot;parquet&quot;, data_files=...)</code> or{' '}
-          <code>load_dataset(&quot;json&quot;, data_files=...)</code>) and pass the result straight into Unsloth&apos;s
-          trainer for this plan&apos;s objective (<code>SFTTrainer</code> for prompt-completion/conversation,{' '}
-          <code>DPOTrainer</code> for preference pairs) — the exported schema already matches what each expects.
-        </p>
-      </div>
     </section>
   )
 }

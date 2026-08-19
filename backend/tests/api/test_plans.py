@@ -191,7 +191,7 @@ def _gemini_test_provider(handler):
     provider_client = httpx.AsyncClient(transport=transport, base_url=base_url)
     profile = ProviderProfile(
         name="gemini-goal-suggestion", base_url=base_url, model="gemini-2.5-flash",
-        endpoint_scope="remote", credential_reference="gemini",
+        credential_reference="gemini",
     )
     return OpenAICompatibleProvider(profile, provider_client)
 

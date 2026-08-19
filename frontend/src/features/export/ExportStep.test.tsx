@@ -22,11 +22,10 @@ describe('ExportStep', () => {
     URL.revokeObjectURL = vi.fn()
   })
 
-  it('renders a Download export button and Unsloth import instructions', () => {
+  it('renders a Download export button', () => {
     renderWithProviders(<ExportStep runId="run-1" />)
 
     expect(screen.getByRole('button', { name: /download export/i })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /unsloth/i })).toBeInTheDocument()
   })
 
   it('has no axe-detectable accessibility violations', async () => {

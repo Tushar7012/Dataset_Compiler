@@ -32,21 +32,6 @@ def _project_id(client) -> uuid.UUID:
     return ProjectRepository(session, client.artifact_store).create("proj").id
 
 
-def test_create_local_provider_without_api_key_stores_no_credential_reference(client):
-    response = client.post(
-        "/api/providers",
-        json={
-            "project_id": str(_project_id(client)), "name": "ollama", "base_url": "http://127.0.0.1:11434",
-            "model": "llama3", "endpoint_scope": "local",
-        },
-    )
-
-    assert response.status_code == 201
-    session = client.session_factory()
-    stored = session.query(ProviderProfileRecord).one()
-    assert stored.credential_reference is None
-
-
 def test_create_remote_provider_with_api_key_stores_a_credential_reference_not_the_key(client, monkeypatch):
     stored_keys = {}
     monkeypatch.setattr(
@@ -57,7 +42,7 @@ def test_create_remote_provider_with_api_key_stores_a_credential_reference_not_t
         "/api/providers",
         json={
             "project_id": str(_project_id(client)), "name": "openai", "base_url": "https://api.openai.com/v1",
-            "model": "gpt-4", "endpoint_scope": "remote", "api_key": "sk-super-secret",
+            "model": "gpt-4", "api_key": "sk-super-secret",
         },
     )
 
@@ -77,7 +62,7 @@ def test_remote_provider_without_api_key_falls_back_to_preconfigured_credential(
         json={
             "project_id": str(_project_id(client)), "name": "gemini",
             "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-            "model": "gemini-2.5-flash", "endpoint_scope": "remote",
+            "model": "gemini-2.5-flash",
         },
     )
 
@@ -95,7 +80,7 @@ def test_hf_router_provider_without_api_key_falls_back_to_hf_token_credential(cl
         json={
             "project_id": str(_project_id(client)), "name": "hf-router-judge",
             "base_url": "https://router.huggingface.co/v1",
-            "model": "Qwen/Qwen3-235B-A22B-Instruct-2507", "endpoint_scope": "remote",
+            "model": "Qwen/Qwen3-235B-A22B-Instruct-2507",
         },
     )
 
@@ -116,7 +101,7 @@ def test_remote_provider_without_api_key_or_preconfigured_credential_stores_none
         json={
             "project_id": str(_project_id(client)), "name": "gemini",
             "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-            "model": "gemini-2.5-flash", "endpoint_scope": "remote",
+            "model": "gemini-2.5-flash",
         },
     )
 
@@ -124,14 +109,3 @@ def test_remote_provider_without_api_key_or_preconfigured_credential_stores_none
     session = client.session_factory()
     stored = session.query(ProviderProfileRecord).one()
     assert stored.credential_reference is None
-
-
-def test_invalid_endpoint_scope_is_rejected(client):
-    response = client.post(
-        "/api/providers",
-        json={
-            "project_id": str(_project_id(client)), "name": "x", "base_url": "http://x", "model": "x",
-            "endpoint_scope": "not-a-real-scope",
-        },
-    )
-    assert response.status_code == 422

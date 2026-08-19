@@ -33,15 +33,7 @@ def test_session_bootstrap_returns_token_without_auth_header(tmp_path):
     app, client = make_client(tmp_path)
     resp = client.get("/api/session")
     assert resp.status_code == 200
-    assert resp.json() == {"token": app.state.session_token, "remote_parsing_enabled": False}
-
-
-def test_session_bootstrap_reports_remote_parsing_enabled_when_configured(tmp_path):
-    app = create_app(Settings(data_dir=tmp_path, docling_remote_url="http://dgx:9100"))
-    client = TestClient(app)
-    resp = client.get("/api/session")
-    assert resp.status_code == 200
-    assert resp.json()["remote_parsing_enabled"] is True
+    assert resp.json() == {"token": app.state.session_token}
 
 
 def test_session_bootstrap_rejects_mismatched_origin(tmp_path):
@@ -55,7 +47,7 @@ def test_session_bootstrap_allows_matching_origin(tmp_path):
     origin = f"http://127.0.0.1:{app.state.settings.port}"
     resp = client.get("/api/session", headers={"Origin": origin})
     assert resp.status_code == 200
-    assert resp.json() == {"token": app.state.session_token, "remote_parsing_enabled": False}
+    assert resp.json() == {"token": app.state.session_token}
 
 
 def test_version_reports_configured_version(tmp_path):

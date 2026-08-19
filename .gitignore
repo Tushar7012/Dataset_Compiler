@@ -21,3 +21,14 @@ frontend/dist/
 # OS
 Thumbs.db
 .DS_Store
+
+# Generated / cache / local tool state
+graphify-out/
+backend/output/
+output/
+frontend/test-results/
+frontend/tsconfig.tsbuildinfo
+frontend/e2e/fixtures/*.zip
+.playwright-mcp/
+.serena/
+.claude/launch.json

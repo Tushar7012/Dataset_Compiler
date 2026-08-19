@@ -9,7 +9,6 @@ interface PreviewStepProps {
   planId: string
   generatorProfileId: string
   judgeProfileId?: string
-  remoteConsentGranted: boolean
   onApprovedFull: (fullRun: RunCreated) => void
 }
 
@@ -99,13 +98,7 @@ function PreviewRunning({
   )
 }
 
-export function PreviewStep({
-  planId,
-  generatorProfileId,
-  judgeProfileId,
-  remoteConsentGranted,
-  onApprovedFull,
-}: PreviewStepProps) {
+export function PreviewStep({ planId, generatorProfileId, judgeProfileId, onApprovedFull }: PreviewStepProps) {
   const [run, setRun] = useState<RunCreated | null>(null)
   const [stage, setStage] = useState<RunStatus | null>(null)
   const [progress, setProgress] = useState({ completed: 0, total: 0 })
@@ -138,7 +131,7 @@ export function PreviewStep({
   const startPreview = () => {
     setCreateError(null)
     setIsCreating(true)
-    createPreview({ planId, generatorProfileId, judgeProfileId, remoteConsent: remoteConsentGranted })
+    createPreview({ planId, generatorProfileId, judgeProfileId })
       .then(setRun)
       .catch((error: unknown) => setCreateError(errorMessage(error)))
       .finally(() => setIsCreating(false))
@@ -148,7 +141,7 @@ export function PreviewStep({
     if (!run) return
     setApproveError(null)
     setIsApproving(true)
-    approveFull(run.id, remoteConsentGranted)
+    approveFull(run.id)
       .then(onApprovedFull)
       .catch((error: unknown) => setApproveError(errorMessage(error)))
       .finally(() => setIsApproving(false))

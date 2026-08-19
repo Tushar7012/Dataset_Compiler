@@ -6,18 +6,7 @@ from typing import Any
 
 from datasets import Dataset
 
-from tuneforge.export.splitting import split_train_eval
-from tuneforge.models.analyzer import ModelProfile
-from tuneforge.planning.schemas import TrainingPlan
-from tuneforge.records import (
-    ChatMessage,
-    CPTRecord,
-    DPORecord,
-    RecordMetadata,
-    SFTConversationRecord,
-    SFTPromptCompletionRecord,
-)
-from tuneforge.validation.pipeline import ValidationReport
+from tuneforge.records import CPTRecord, DPORecord, SFTConversationRecord, SFTPromptCompletionRecord
 
 _RECORD_TYPES = {
     "CPTRecord": CPTRecord,
@@ -55,55 +44,22 @@ def _parquet_safe_row(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _write_split(records: list, output_dir: Path, name: str) -> None:
+def export_bundle(*, records: list, output_dir: Path) -> Path:
+    """Writes train.jsonl and train.parquet only — see CLAUDE.md's "Export
+    bundle is train.jsonl/train.parquet only" deviation entry for why this
+    doesn't also split off an eval set or write manifest/provenance/etc.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
     if not records:
-        return
+        return output_dir
+
     rows = [_parquet_safe_row(json.loads(r.model_dump_json())) for r in records]
     dataset = Dataset.from_list(rows)
-    dataset.to_parquet(str(output_dir / f"{name}.parquet"))
-    dataset.to_json(str(output_dir / f"{name}.jsonl"))
+    dataset.to_parquet(str(output_dir / "train.parquet"))
+    dataset.to_json(str(output_dir / "train.jsonl"))
     # Verify by reloading — PLAN.md requires this, not just writing the files.
-    reloaded = Dataset.from_parquet(str(output_dir / f"{name}.parquet"))
+    reloaded = Dataset.from_parquet(str(output_dir / "train.parquet"))
     if reloaded.to_list() != rows:
-        raise RuntimeError(f"{name}.parquet did not reload to the same records it was written from")
-
-
-def export_bundle(
-    *,
-    train: list,
-    eval_records: list,
-    output_dir: Path,
-    model_profile: ModelProfile,
-    plan: TrainingPlan,
-    validation_report: ValidationReport,
-) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    _write_split(train, output_dir, "train")
-    _write_split(eval_records, output_dir, "eval")
-
-    (output_dir / "model-profile.json").write_text(model_profile.model_dump_json(indent=2))
-    (output_dir / "training-plan.json").write_text(plan.model_dump_json(indent=2))
-    (output_dir / "validation-report.json").write_text(
-        json.dumps({"rejection_counts": validation_report.rejection_counts, "assurance_level": validation_report.assurance_level}, indent=2)
-    )
-
-    with (output_dir / "provenance.jsonl").open("w", encoding="utf-8") as provenance_file:
-        for record in train + eval_records:
-            provenance_file.write(json.dumps(json.loads(record.metadata.model_dump_json())))
-            provenance_file.write("\n")
-
-    manifest = {
-        "objective": plan.objective,
-        "canonical_schema": plan.canonical_schema,
-        "model_id": model_profile.model_id,
-        "plan_hash": plan.plan_hash,
-        "train_row_count": len(train),
-        "eval_row_count": len(eval_records),
-        "leakage_warning": len(eval_records) == 0 and len(train) > 0,
-        "rejection_counts": validation_report.rejection_counts,
-        "assurance_level": validation_report.assurance_level,
-    }
-    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        raise RuntimeError("train.parquet did not reload to the same records it was written from")
 
     return output_dir

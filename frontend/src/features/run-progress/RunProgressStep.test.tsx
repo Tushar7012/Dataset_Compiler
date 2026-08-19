@@ -33,6 +33,9 @@ describe('RunProgressStep', () => {
     expect(screen.getByText(/40\/100/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /resume/i })).not.toBeInTheDocument()
+    const progressBar = screen.getByRole('progressbar')
+    expect(progressBar).toHaveAttribute('value', '40')
+    expect(progressBar).toHaveAttribute('max', '100')
   })
 
   it('has no axe-detectable accessibility violations', async () => {

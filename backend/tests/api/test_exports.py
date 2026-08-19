@@ -1,5 +1,7 @@
+import io
 import json
 import uuid
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -45,7 +47,7 @@ def _completed_run(client):
     )
     provider = ProviderProfileRecord(
         id=uuid.uuid4(), project_id=project.id, name="gen", base_url="http://127.0.0.1:9999",
-        model="test-model", endpoint_scope="local",
+        model="test-model",
     )
     plan_record = TrainingPlanRecord(
         id=uuid.uuid4(), project_id=project.id, objective="cpt",
@@ -90,6 +92,9 @@ def test_export_then_download_returns_a_zip(client):
     assert download_response.status_code == 200
     assert download_response.headers["content-type"] == "application/zip"
 
+    with zipfile.ZipFile(io.BytesIO(download_response.content)) as archive:
+        assert sorted(archive.namelist()) == ["train.jsonl", "train.parquet"]
+
 
 def test_download_before_export_returns_404(client):
     run = _completed_run(client)
@@ -102,7 +107,7 @@ def test_export_before_run_completes_is_rejected(client):
     project = ProjectRepository(session, client.artifact_store).create("proj")
     provider = ProviderProfileRecord(
         id=uuid.uuid4(), project_id=project.id, name="gen", base_url="http://127.0.0.1:9999",
-        model="test-model", endpoint_scope="local",
+        model="test-model",
     )
     plan_record = TrainingPlanRecord(
         id=uuid.uuid4(), project_id=project.id, objective="cpt", plan_json={"canonical_schema": "CPTRecord"}, plan_hash="h"

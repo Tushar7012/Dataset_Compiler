@@ -3,6 +3,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
 from huggingface_hub.utils import EntryNotFoundError, GatedRepoError, LocalEntryNotFoundError
 
 from tuneforge.models.analyzer import GatedModelError, ModelNotAccessibleError, analyze_model
@@ -128,6 +129,28 @@ def test_offline_model_raises_actionable_error(monkeypatch):
 
     with pytest.raises(ModelNotAccessibleError):
         analyze_model("meta-llama/Llama-3-8B", source="huggingface")
+
+
+def test_nonexistent_repo_raises_actionable_error(monkeypatch):
+    fake_response = httpx.Response(404, request=httpx.Request("GET", "https://huggingface.co"))
+
+    def fake_download(*, repo_id, filename, token=None):
+        raise RepositoryNotFoundError("not found", response=fake_response)
+
+    monkeypatch.setattr("tuneforge.models.analyzer.hf_hub_download", fake_download)
+
+    with pytest.raises(ModelNotAccessibleError, match="not found"):
+        analyze_model("does-not/exist", source="huggingface")
+
+
+def test_malformed_repo_id_raises_actionable_error(monkeypatch):
+    def fake_download(*, repo_id, filename, token=None):
+        raise HFValidationError("bad repo id")
+
+    monkeypatch.setattr("tuneforge.models.analyzer.hf_hub_download", fake_download)
+
+    with pytest.raises(ModelNotAccessibleError, match="not a valid Hugging Face repo id"):
+        analyze_model("Qwen / Qwen2.5-1.5B-Instruct ", source="huggingface")
 
 
 def test_gguf_only_repo_raises_actionable_error(monkeypatch):

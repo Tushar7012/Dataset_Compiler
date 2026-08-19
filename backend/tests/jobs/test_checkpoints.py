@@ -28,7 +28,7 @@ def run(session, tmp_path: Path):
     )
     provider = ProviderProfileRecord(
         id=uuid.uuid4(), project_id=project.id, name="gen", base_url="http://127.0.0.1:9999",
-        model="test-model", endpoint_scope="local",
+        model="test-model",
     )
     session.add_all([plan, provider])
     session.commit()

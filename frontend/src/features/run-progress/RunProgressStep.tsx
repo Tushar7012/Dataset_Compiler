@@ -72,6 +72,7 @@ export function RunProgressStep({ runId, onCompleted }: RunProgressStepProps) {
         <p>
           Run status: <strong>{stage ?? 'pending'}</strong> ({progress.completed}/{progress.total} rows)
         </p>
+        <progress className="run-progress-bar" value={progress.completed} max={progress.total || 1} />
       </div>
 
       <div className="button-row">

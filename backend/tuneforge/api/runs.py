@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -11,13 +10,11 @@ from sqlalchemy.orm import Session
 from tuneforge.api.deps import get_artifact_store, get_session
 from tuneforge.jobs.runner import is_run_process_alive, run_output_path, start_run
 from tuneforge.storage.artifacts import ArtifactStore
-from tuneforge.storage.models import ProviderProfileRecord, RunRecord, TrainingPlanRecord
+from tuneforge.storage.models import RunRecord, TrainingPlanRecord
 
 router = APIRouter()
 
 _CANCELLABLE_STATUSES = {"pending", "running"}
-
-_CONSENT_ERROR = "remote provider requires explicit consent — set 'remote_consent': true"
 
 
 def _get_run_or_404(session: Session, run_id: uuid.UUID) -> RunRecord:
@@ -25,51 +22,6 @@ def _get_run_or_404(session: Session, run_id: uuid.UUID) -> RunRecord:
     if run is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
     return run
-
-
-def _requires_remote_consent(
-    session: Session,
-    generator_profile_id: uuid.UUID,
-    judge_profile_id: uuid.UUID | None,
-    *,
-    remote_parsing_enabled: bool = False,
-) -> bool:
-    # Remote document parsing (the DGX GPU service, when configured) sends
-    # document bytes off the machine just like a remote LLM provider sends
-    # document text — same consent rule applies, gated coarsely per-run
-    # rather than adding a second, parsing-specific consent flow.
-    if remote_parsing_enabled:
-        return True
-    generator = session.get(ProviderProfileRecord, generator_profile_id)
-    if generator is not None and generator.endpoint_scope == "remote":
-        return True
-    if judge_profile_id is not None:
-        judge = session.get(ProviderProfileRecord, judge_profile_id)
-        if judge is not None and judge.endpoint_scope == "remote":
-            return True
-    return False
-
-
-def _resolve_remote_consent(
-    session: Session,
-    payload: dict,
-    generator_profile_id: uuid.UUID,
-    judge_profile_id: uuid.UUID | None,
-    *,
-    remote_parsing_enabled: bool = False,
-) -> datetime | None:
-    if not _requires_remote_consent(
-        session, generator_profile_id, judge_profile_id, remote_parsing_enabled=remote_parsing_enabled
-    ):
-        return None
-    if not payload.get("remote_consent"):
-        raise HTTPException(status_code=422, detail=_CONSENT_ERROR)
-    return datetime.now(timezone.utc)
-
-
-def _remote_parsing_enabled(request: Request) -> bool:
-    settings = getattr(request.app.state, "settings", None)
-    return bool(settings and settings.docling_remote_url)
 
 
 @router.post("/runs/preview", status_code=201)
@@ -85,9 +37,6 @@ async def create_preview(payload: dict, request: Request, session: Session = Dep
 
     generator_uuid = uuid.UUID(generator_profile_id)
     judge_uuid = uuid.UUID(payload["judge_profile_id"]) if payload.get("judge_profile_id") else None
-    remote_consent_granted_at = _resolve_remote_consent(
-        session, payload, generator_uuid, judge_uuid, remote_parsing_enabled=_remote_parsing_enabled(request)
-    )
 
     run = RunRecord(
         id=uuid.uuid4(),
@@ -96,7 +45,6 @@ async def create_preview(payload: dict, request: Request, session: Session = Dep
         generator_profile_id=generator_uuid,
         judge_profile_id=judge_uuid,
         is_preview=True,
-        remote_consent_granted_at=remote_consent_granted_at,
     )
     session.add(run)
     session.commit()
@@ -144,10 +92,7 @@ async def resume_run(run_id: uuid.UUID, request: Request, session: Session = Dep
 
 
 @router.post("/runs/{run_id}/approve-full")
-async def approve_full(
-    run_id: uuid.UUID, request: Request, payload: dict | None = None, session: Session = Depends(get_session)
-):
-    payload = payload or {}
+async def approve_full(run_id: uuid.UUID, request: Request, session: Session = Depends(get_session)):
     preview_run = _get_run_or_404(session, run_id)
     if not preview_run.is_preview:
         raise HTTPException(status_code=409, detail="only a preview run can be approved into a full run")
@@ -163,14 +108,6 @@ async def approve_full(
     if plan.approved_at is None:
         raise HTTPException(status_code=409, detail="plan_hash has not been approved (or was invalidated)")
 
-    # A full run is its own run, distinct from the preview that scoped it —
-    # PLAN.md requires explicit consent per run, so this doesn't inherit the
-    # preview's grant even though it reuses the same provider profiles.
-    remote_consent_granted_at = _resolve_remote_consent(
-        session, payload, preview_run.generator_profile_id, preview_run.judge_profile_id,
-        remote_parsing_enabled=_remote_parsing_enabled(request),
-    )
-
     full_run = RunRecord(
         id=uuid.uuid4(),
         project_id=preview_run.project_id,
@@ -178,7 +115,6 @@ async def approve_full(
         generator_profile_id=preview_run.generator_profile_id,
         judge_profile_id=preview_run.judge_profile_id,
         is_preview=False,
-        remote_consent_granted_at=remote_consent_granted_at,
     )
     session.add(full_run)
     session.commit()

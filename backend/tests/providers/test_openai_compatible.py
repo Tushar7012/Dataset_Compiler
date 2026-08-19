@@ -1,6 +1,4 @@
 import logging
-import uuid
-from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -9,10 +7,9 @@ from tuneforge.providers.openai_compatible import (
     OpenAICompatibleProvider,
     ProviderAuthError,
     ProviderResponseError,
-    RemoteConsentRequiredError,
     extract_json_object,
 )
-from tuneforge.providers.protocol import GenerationRequest, ProviderProfile, RunConsent
+from tuneforge.providers.protocol import GenerationRequest, ProviderProfile
 
 
 def test_extract_json_object_parses_bare_json():
@@ -34,14 +31,13 @@ def test_extract_json_object_raises_when_no_json_present():
         extract_json_object("<think>still thinking</think>\nno json here")
 
 
-def make_provider(handler, *, endpoint_scope="local", credential_reference=None, base_url="http://127.0.0.1:9999"):
+def make_provider(handler, *, credential_reference=None, base_url="http://127.0.0.1:9999"):
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport, base_url=base_url)
     profile = ProviderProfile(
         name="test",
         base_url=base_url,
         model="test-model",
-        endpoint_scope=endpoint_scope,
         credential_reference=credential_reference,
     )
     return OpenAICompatibleProvider(profile, client)
@@ -124,29 +120,6 @@ async def test_generate_raises_provider_response_error_on_null_content():
     provider = make_provider(handler)
     with pytest.raises(ProviderResponseError):
         await provider.generate(GenerationRequest(messages=[{"role": "user", "content": "hi"}]))
-
-
-async def test_remote_provider_refuses_generation_without_consent():
-    def handler(request):
-        raise AssertionError("should not reach the network without consent")
-
-    provider = make_provider(handler, endpoint_scope="remote")
-
-    with pytest.raises(RemoteConsentRequiredError):
-        await provider.generate(GenerationRequest(messages=[{"role": "user", "content": "hi"}]))
-
-
-async def test_remote_provider_allows_generation_with_consent():
-    def handler(request):
-        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
-
-    provider = make_provider(handler, endpoint_scope="remote")
-    consent = RunConsent(run_id=uuid.uuid4(), granted_at=datetime.now(timezone.utc))
-
-    result = await provider.generate(
-        GenerationRequest(messages=[{"role": "user", "content": "hi"}]), consent=consent
-    )
-    assert result.content == "ok"
 
 
 async def test_generate_posts_to_full_base_url_path_not_a_hardcoded_v1_prefix():

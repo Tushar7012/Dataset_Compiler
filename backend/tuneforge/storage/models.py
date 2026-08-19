@@ -75,7 +75,6 @@ class ProviderProfileRecord(Base):
     name: Mapped[str] = mapped_column()
     base_url: Mapped[str] = mapped_column()
     model: Mapped[str] = mapped_column()
-    endpoint_scope: Mapped[str] = mapped_column()
     credential_reference: Mapped[str | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
@@ -105,7 +104,6 @@ class RunRecord(Base):
     # resumed after the document phase already reached "completed" once.
     structured_merge_completed_at: Mapped[datetime | None] = mapped_column(default=None)
     assurance_level: Mapped[str | None] = mapped_column(default=None)
-    remote_consent_granted_at: Mapped[datetime | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
 

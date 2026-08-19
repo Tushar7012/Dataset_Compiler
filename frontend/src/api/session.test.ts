@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getRemoteParsingEnabled, getSessionToken, resetSessionTokenForTests } from './session'
+import { getSessionToken, resetSessionTokenForTests } from './session'
 
 describe('session bootstrap', () => {
   beforeEach(() => {
@@ -15,34 +15,21 @@ describe('session bootstrap', () => {
       'fetch',
       vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ token: 'tok-1', remote_parsing_enabled: false }),
+        json: async () => ({ token: 'tok-1' }),
       }),
     )
 
     await expect(getSessionToken()).resolves.toBe('tok-1')
   })
 
-  it('resolves remote_parsing_enabled from the same bootstrap response', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ token: 'tok-1', remote_parsing_enabled: true }),
-      }),
-    )
-
-    await expect(getRemoteParsingEnabled()).resolves.toBe(true)
-  })
-
-  it('only calls /api/session once even when both getters are used', async () => {
+  it('only calls /api/session once across repeated calls', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ token: 'tok-1', remote_parsing_enabled: true }),
+      json: async () => ({ token: 'tok-1' }),
     })
     vi.stubGlobal('fetch', fetchMock)
 
     await getSessionToken()
-    await getRemoteParsingEnabled()
     await getSessionToken()
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -52,7 +39,7 @@ describe('session bootstrap', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: false, status: 500 })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ token: 'tok-2', remote_parsing_enabled: false }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ token: 'tok-2' }) })
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(getSessionToken()).rejects.toThrow()

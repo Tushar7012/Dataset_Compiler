@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { createProject, uploadSource } from '../../api/projects'
 import { getSourceSchema } from '../../api/structured'
@@ -23,42 +23,21 @@ function errorMessage(error: unknown): string {
   return 'Something went wrong. Try again.'
 }
 
-function CreateProjectForm({
-  name,
-  setName,
-  onSubmit,
-  isPending,
-  error,
-}: {
-  name: string
-  setName: (value: string) => void
-  onSubmit: () => void
-  isPending: boolean
-  error: unknown
-}) {
+// No project-naming screen by design — the user just wants to land on the
+// upload panel immediately. A project still needs a name server-side, so
+// one is generated here instead of asked for.
+function generateProjectName(): string {
+  return `Project ${new Date().toISOString()}`
+}
+
+function CreatingProjectPanel({ error }: { error: unknown }) {
   const headingRef = useFocusOnMount<HTMLHeadingElement>()
   return (
     <section className="wizard-step">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          onSubmit()
-        }}
-      >
-        <h2 ref={headingRef} tabIndex={-1}>
-          Project setup
-        </h2>
-        <div className="field">
-          <label htmlFor="project-name">Project name</label>
-          <input id="project-name" value={name} onChange={(event) => setName(event.target.value)} />
-        </div>
-        <div className="button-row">
-          <button type="submit" disabled={isPending}>
-            Create project
-          </button>
-        </div>
-        {error != null && <p role="alert">{errorMessage(error)}</p>}
-      </form>
+      <h2 ref={headingRef} tabIndex={-1}>
+        Setting up…
+      </h2>
+      {error != null && <p role="alert">{errorMessage(error)}</p>}
     </section>
   )
 }
@@ -88,7 +67,6 @@ function UploadSourcesPanel({
       <h2 ref={headingRef} tabIndex={-1}>
         Upload sources
       </h2>
-      <p>{project.name}</p>
       <div className="field">
         <label htmlFor="source-upload">Upload a source document</label>
         <input
@@ -134,9 +112,9 @@ function UploadSourcesPanel({
 }
 
 export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
-  const [name, setName] = useState('')
   const [project, setProject] = useState<Project | null>(null)
   const [sources, setSources] = useState<SourceWithStatus[]>([])
+  const started = useRef(false)
 
   const setSourceStatus = (sourceId: string, mappingStatus: MappingStatus, probeError?: string) =>
     setSources((previous) =>
@@ -162,9 +140,16 @@ export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
   }
 
   const createProjectMutation = useMutation({
-    mutationFn: () => createProject(name),
+    mutationFn: () => createProject(generateProjectName()),
     onSuccess: setProject,
   })
+
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    createProjectMutation.mutate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const uploadMutation = useMutation({
     mutationFn: (file: File) => uploadSource(project!.id, file),
@@ -179,15 +164,7 @@ export function ProjectSetupStep({ onProjectReady }: ProjectSetupStepProps) {
     sources.every((source) => source.mappingStatus === 'document' || source.mappingStatus === 'mapped')
 
   if (!project) {
-    return (
-      <CreateProjectForm
-        name={name}
-        setName={setName}
-        onSubmit={() => createProjectMutation.mutate()}
-        isPending={createProjectMutation.isPending}
-        error={createProjectMutation.isError ? createProjectMutation.error : null}
-      />
-    )
+    return <CreatingProjectPanel error={createProjectMutation.isError ? createProjectMutation.error : null} />
   }
 
   return (

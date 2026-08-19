@@ -33,32 +33,52 @@ vi.mock('./features/model-selection/ModelSelectionStep', () => ({
     </button>
   ),
 }))
-vi.mock('./features/goal-suggestion/GoalSuggestionStep', () => ({
-  GoalSuggestionStep: ({ onDecision }: any) => (
-    <button onClick={() => onDecision('preference_alignment', 'be concise')}>stub-decision</button>
-  ),
-}))
-vi.mock('./features/provider-config/ProviderConfigStep', () => ({
-  ProviderConfigStep: ({ onProviderReady }: any) => (
-    <button
-      onClick={() =>
-        onProviderReady(
-          { id: 'gen-1', name: 'generator', endpoint_scope: 'local' },
-          { id: 'judge-1', name: 'judge', endpoint_scope: 'remote' },
-          true,
-        )
-      }
-    >
-      stub-provider-ready
-    </button>
-  ),
-}))
 vi.mock('./features/goal-wizard/GoalWizardStep', () => ({
   GoalWizardStep: (props: any) => (
+    <div>
+      <div data-testid="goal-wizard" />
+      <button
+        onClick={() =>
+          props.onGoalChosen({
+            goal: 'preference_alignment',
+            targetRows: 500,
+          })
+        }
+      >
+        stub-goal-chosen
+      </button>
+    </div>
+  ),
+}))
+vi.mock('./features/run-preparation/PreparingRunStep', () => ({
+  PreparingRunStep: (props: any) => (
+    <div>
+      <div
+        data-testid="preparing-run"
+        data-project-id={props.projectId}
+        data-model-profile-id={props.modelProfileId}
+        data-decision-goal={props.decision.goal}
+        data-decision-target-rows={props.decision.targetRows}
+      />
+      <button
+        onClick={() =>
+          props.onReady(
+            { id: 'plan-1' },
+            { id: 'gen-1', name: 'generator' },
+            { id: 'judge-1', name: 'judge' },
+          )
+        }
+      >
+        stub-run-ready
+      </button>
+    </div>
+  ),
+}))
+vi.mock('./features/preview/PreviewStep', () => ({
+  PreviewStep: (props: any) => (
     <div
-      data-testid="goal-wizard"
-      data-initial-goal={props.initialGoal}
-      data-initial-desired-behavior={props.initialDesiredBehavior}
+      data-testid="preview-step"
+      data-plan-id={props.planId}
       data-generator-profile-id={props.generatorProfileId}
       data-judge-profile-id={props.judgeProfileId}
     />
@@ -66,22 +86,28 @@ vi.mock('./features/goal-wizard/GoalWizardStep', () => ({
 }))
 
 describe('App wizard wiring', () => {
-  it('runs provider config between goal-suggestion and the goal wizard, threading both into GoalWizardStep', async () => {
+  it('threads project and model into GoalWizardStep, then its decision into PreparingRunStep, and its onReady into PreviewStep', async () => {
     const user = userEvent.setup()
     renderWithProviders(<App />)
 
     await user.click(screen.getByText('stub-project-ready'))
     await user.click(screen.getByText('stub-model-ready'))
-    expect(screen.getByText('stub-decision')).toBeInTheDocument()
-    await user.click(screen.getByText('stub-decision'))
 
-    expect(screen.getByText('stub-provider-ready')).toBeInTheDocument()
-    await user.click(screen.getByText('stub-provider-ready'))
+    expect(screen.getByTestId('goal-wizard')).toBeInTheDocument()
 
-    const goalWizard = screen.getByTestId('goal-wizard')
-    expect(goalWizard).toHaveAttribute('data-initial-goal', 'preference_alignment')
-    expect(goalWizard).toHaveAttribute('data-initial-desired-behavior', 'be concise')
-    expect(goalWizard).toHaveAttribute('data-generator-profile-id', 'gen-1')
-    expect(goalWizard).toHaveAttribute('data-judge-profile-id', 'judge-1')
+    await user.click(screen.getByText('stub-goal-chosen'))
+
+    const preparingRun = screen.getByTestId('preparing-run')
+    expect(preparingRun).toHaveAttribute('data-project-id', 'proj-1')
+    expect(preparingRun).toHaveAttribute('data-model-profile-id', 'profile-1')
+    expect(preparingRun).toHaveAttribute('data-decision-goal', 'preference_alignment')
+    expect(preparingRun).toHaveAttribute('data-decision-target-rows', '500')
+
+    await user.click(screen.getByText('stub-run-ready'))
+
+    const previewStep = screen.getByTestId('preview-step')
+    expect(previewStep).toHaveAttribute('data-plan-id', 'plan-1')
+    expect(previewStep).toHaveAttribute('data-generator-profile-id', 'gen-1')
+    expect(previewStep).toHaveAttribute('data-judge-profile-id', 'judge-1')
   })
 })

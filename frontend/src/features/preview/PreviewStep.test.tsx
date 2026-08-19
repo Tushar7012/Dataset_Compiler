@@ -26,24 +26,14 @@ const mockSubscribe = vi.mocked(subscribeToRunEvents)
 describe('PreviewStep', () => {
   it('shows a Generate preview button initially', () => {
     renderWithProviders(
-      <PreviewStep
-        planId="plan-1"
-        generatorProfileId="prov-1"
-        remoteConsentGranted={false}
-        onApprovedFull={vi.fn()}
-      />,
+      <PreviewStep planId="plan-1" generatorProfileId="prov-1" onApprovedFull={vi.fn()} />,
     )
     expect(screen.getByRole('button', { name: /generate preview/i })).toBeInTheDocument()
   })
 
   it('has no axe-detectable accessibility violations', async () => {
     const { container } = renderWithProviders(
-      <PreviewStep
-        planId="plan-1"
-        generatorProfileId="prov-1"
-        remoteConsentGranted={false}
-        onApprovedFull={vi.fn()}
-      />,
+      <PreviewStep planId="plan-1" generatorProfileId="prov-1" onApprovedFull={vi.fn()} />,
     )
     await screen.findByRole('button', { name: /generate preview/i })
     const results = await axe(container)
@@ -52,12 +42,7 @@ describe('PreviewStep', () => {
 
   it('moves focus to the step heading on mount', () => {
     renderWithProviders(
-      <PreviewStep
-        planId="plan-1"
-        generatorProfileId="prov-1"
-        remoteConsentGranted={false}
-        onApprovedFull={vi.fn()}
-      />,
+      <PreviewStep planId="plan-1" generatorProfileId="prov-1" onApprovedFull={vi.fn()} />,
     )
     expect(screen.getByRole('heading', { name: /^preview$/i })).toHaveFocus()
   })
@@ -76,12 +61,7 @@ describe('PreviewStep', () => {
     })
 
     renderWithProviders(
-      <PreviewStep
-        planId="plan-1"
-        generatorProfileId="prov-1"
-        remoteConsentGranted={false}
-        onApprovedFull={vi.fn()}
-      />,
+      <PreviewStep planId="plan-1" generatorProfileId="prov-1" onApprovedFull={vi.fn()} />,
     )
     await user.click(screen.getByRole('button', { name: /generate preview/i }))
 
@@ -91,7 +71,6 @@ describe('PreviewStep', () => {
       planId: 'plan-1',
       generatorProfileId: 'prov-1',
       judgeProfileId: undefined,
-      remoteConsent: false,
     })
   })
 
@@ -107,18 +86,13 @@ describe('PreviewStep', () => {
     const onApprovedFull = vi.fn()
 
     renderWithProviders(
-      <PreviewStep
-        planId="plan-1"
-        generatorProfileId="prov-1"
-        remoteConsentGranted={true}
-        onApprovedFull={onApprovedFull}
-      />,
+      <PreviewStep planId="plan-1" generatorProfileId="prov-1" onApprovedFull={onApprovedFull} />,
     )
     await user.click(screen.getByRole('button', { name: /generate preview/i }))
     const approveButton = await screen.findByRole('button', { name: /approve full run/i })
     await user.click(approveButton)
 
-    expect(mockApproveFull).toHaveBeenCalledWith('run-1', true)
+    expect(mockApproveFull).toHaveBeenCalledWith('run-1')
     await waitFor(() => expect(onApprovedFull).toHaveBeenCalledWith(fullRun))
   })
 
@@ -127,12 +101,7 @@ describe('PreviewStep', () => {
     mockCreatePreview.mockRejectedValue(new ApiError(404, 'plan not found'))
 
     renderWithProviders(
-      <PreviewStep
-        planId="plan-1"
-        generatorProfileId="prov-1"
-        remoteConsentGranted={false}
-        onApprovedFull={vi.fn()}
-      />,
+      <PreviewStep planId="plan-1" generatorProfileId="prov-1" onApprovedFull={vi.fn()} />,
     )
     await user.click(screen.getByRole('button', { name: /generate preview/i }))
 
